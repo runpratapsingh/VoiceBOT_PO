@@ -23,7 +23,8 @@ interface VoiceBotProps {
 
 export default function VoiceBot({ apiKey: propApiKey, initialPersona }: VoiceBotProps) {
   // --- State ---
-  const [apiKey] = useState(propApiKey || 'AIzaSyA0vPgn-f798YZbJIhJyL3njB4lSNLlMxU');
+  // const [apiKey] = useState(propApiKey || 'AIzaSyA0vPgn-f798YZbJIhJyL3njB4lSNLlMxU');
+  const [apiKey] = useState(propApiKey || 'AIzaSyBuqKC2HiOKMYjpx3AKVrGY2BfofJz8trI');
   const [isConnected, setIsConnected] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -80,29 +81,29 @@ export default function VoiceBot({ apiKey: propApiKey, initialPersona }: VoiceBo
   const encodePcm = (float32Array: Float32Array) => {
     const l = float32Array.length;
     const int16 = new Int16Array(l);
-    
+
     // Find peak for normalization
     let peak = 0;
     for (let i = 0; i < l; i++) {
       const abs = Math.abs(float32Array[i]);
       if (abs > peak) peak = abs;
     }
-    
+
     // Normalize and boost if volume is too low for VAD
     const boost = peak < 0.1 ? 2.0 : 1.0;
-    
+
     for (let i = 0; i < l; i++) {
-        // Boost, Clip, and Convert
-        let val = float32Array[i] * boost;
-        val = Math.max(-1, Math.min(1, val));
-        int16[i] = val * 32768;
+      // Boost, Clip, and Convert
+      let val = float32Array[i] * boost;
+      val = Math.max(-1, Math.min(1, val));
+      int16[i] = val * 32768;
     }
-    
+
     const bytes = new Uint8Array(int16.buffer);
     let binary = '';
     const len = bytes.byteLength;
     for (let i = 0; i < len; i++) {
-        binary += String.fromCharCode(bytes[i]);
+      binary += String.fromCharCode(bytes[i]);
     }
     return btoa(binary);
   };
@@ -144,7 +145,7 @@ export default function VoiceBot({ apiKey: propApiKey, initialPersona }: VoiceBo
     for (let i = 0; i < int16Array.length; i++) {
       float32Array[i] = int16Array[i] / 32768.0;
     }
-    
+
     const buffer = ctx.createBuffer(1, float32Array.length, OUTPUT_SAMPLE_RATE);
     buffer.getChannelData(0).set(float32Array);
     return buffer;
@@ -198,7 +199,7 @@ BEHAVIOR:
   // --- Core Logic ---
   const stopAllAudio = () => {
     activeSourcesRef.current.forEach(source => {
-      try { source.stop(); } catch (e) {}
+      try { source.stop(); } catch (e) { }
     });
     activeSourcesRef.current.clear();
     nextStartTimeRef.current = 0;
@@ -221,7 +222,7 @@ BEHAVIOR:
     if (sessionRef.current) {
       try {
         sessionRef.current.close();
-      } catch (e) {}
+      } catch (e) { }
       sessionRef.current = null;
     }
 
@@ -240,23 +241,23 @@ BEHAVIOR:
     try {
       console.log("[Voice] Step 1: Loading Gemini SDK...");
       const GoogleGenAI = await loadSDK();
-      
+
       console.log("[Voice] Step 2: Requesting microphone access...");
       let stream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ 
+        stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true
-          } 
+          }
         });
         console.log("[Voice] Microphone access granted. Tracks:", stream.getAudioTracks().map(t => t.label));
       } catch (micErr: any) {
         console.error("[Voice] Microphone access DENIED or failed:", micErr);
         throw new Error(`Microphone error: ${micErr.message}. Please click the lock icon in your browser URL bar and allow microphone access.`);
       }
-      
+
       console.log("[Voice] Step 3: Initializing Audio Contexts...");
       if (!inputAudioCtxRef.current) {
         inputAudioCtxRef.current = new AudioContext({ sampleRate: INPUT_SAMPLE_RATE });
@@ -272,7 +273,7 @@ BEHAVIOR:
       console.log("[Voice] Step 4: Connecting to Gemini Live API...");
       const ai = new GoogleGenAI({ apiKey });
       console.log("[Voice] Connecting to model:", MODEL_NAME);
-      
+
       const sessionPromise = ai.live.connect({
         model: MODEL_NAME,
         config: {
@@ -293,7 +294,7 @@ BEHAVIOR:
             isConnectedRef.current = true;
             setIsListening(true);
             setStatus('Active');
-            
+
             const source = inputAudioCtxRef.current!.createMediaStreamSource(stream);
             const gainNode = inputAudioCtxRef.current!.createGain();
             gainNode.gain.value = 3.0; // Significant boost to ensure VAD trigger
@@ -302,30 +303,30 @@ BEHAVIOR:
             scriptProcessorRef.current = scriptProcessor;
 
             scriptProcessor.onaudioprocess = (e) => {
-                const data = e.inputBuffer.getChannelData(0);
-                let peak = 0;
-                for (let i = 0; i < data.length; i++) {
-                  const abs = Math.abs(data[i]);
-                  if (abs > peak) peak = abs;
-                }
-                
-                if (Math.random() < 0.1) {
-                  console.log("[Mic] Pulsing... True Peak:", peak.toFixed(4));
-                }
-                
-                const isReady = sessionRef.current && isConnectedRef.current && !isMutedRef.current;
+              const data = e.inputBuffer.getChannelData(0);
+              let peak = 0;
+              for (let i = 0; i < data.length; i++) {
+                const abs = Math.abs(data[i]);
+                if (abs > peak) peak = abs;
+              }
+
+              if (Math.random() < 0.1) {
+                console.log("[Mic] Pulsing... True Peak:", peak.toFixed(4));
+              }
+
+              const isReady = sessionRef.current && isConnectedRef.current && !isMutedRef.current;
 
               if (isReady) {
                 const pcmData = encodePcm(e.inputBuffer.getChannelData(0));
                 try {
-                  const payload = { 
+                  const payload = {
                     realtimeInput: {
                       mediaChunks: [{ data: pcmData, mimeType: 'audio/pcm;rate=16000' }]
                     }
                   };
                   if (sessionRef.current.sendRealtimeInput) {
-                    sessionRef.current.sendRealtimeInput({ 
-                      media: { data: pcmData, mimeType: 'audio/pcm;rate=16000' } 
+                    sessionRef.current.sendRealtimeInput({
+                      media: { data: pcmData, mimeType: 'audio/pcm;rate=16000' }
                     });
                     chunkCountRef.current++;
                     if (chunkCountRef.current % 50 === 0) {
@@ -347,7 +348,7 @@ BEHAVIOR:
           },
           onmessage: async (msg: any) => {
             if (msg.setupComplete) console.log("[Voice] Bot setup complete (onmessage).");
-            
+
             // Log everything for now to see what's happening
             if (!msg.setupComplete && !msg.serverContent?.inputTranscription) {
               console.log("[Voice] Received Message:", msg);
@@ -360,7 +361,7 @@ BEHAVIOR:
                 setCurrentTranscription(prev => prev + text);
               }
             }
-            
+
             // Handle Transcription (Output)
             if (msg.serverContent?.outputTranscription) {
               const text = msg.serverContent.outputTranscription.text || '';
@@ -377,10 +378,10 @@ BEHAVIOR:
 
             if (msg.serverContent?.turnComplete) {
               if (currentTranscription) {
-                setMessages(prev => [...prev, { 
-                  role: 'user', 
-                  text: currentTranscription, 
-                  timestamp: new Date().toLocaleTimeString() 
+                setMessages(prev => [...prev, {
+                  role: 'user',
+                  text: currentTranscription,
+                  timestamp: new Date().toLocaleTimeString()
                 }]);
                 setCurrentTranscription('');
               }
@@ -397,22 +398,22 @@ BEHAVIOR:
                 if (part.inlineData) {
                   const base64Data = part.inlineData.data;
                   console.log("[Voice] RECEIVED AUDIO BYTES:", base64Data.length);
-                  
+
                   setIsSpeaking(true);
                   const buffer = await decodePcm(base64Data, ctx);
-                  
+
                   const source = ctx.createBufferSource();
                   source.buffer = buffer;
                   source.connect(ctx.destination);
-                  
+
                   const now = ctx.currentTime;
                   if (nextStartTimeRef.current < now) {
                     nextStartTimeRef.current = now;
                   }
-                  
+
                   source.start(nextStartTimeRef.current);
                   nextStartTimeRef.current += buffer.duration;
-                  
+
                   activeSourcesRef.current.add(source);
                   source.onended = () => {
                     activeSourcesRef.current.delete(source);
@@ -468,7 +469,7 @@ BEHAVIOR:
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-4 font-sans text-slate-200">
       <AnimatePresence>
         {isConnected && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, scale: 0.9, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -478,7 +479,7 @@ BEHAVIOR:
             <div className="p-4 bg-gradient-to-r from-teal-600 to-emerald-600 flex justify-between items-center shadow-lg">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md border border-white/20">
-                   <Volume2 className="text-white w-5 h-5" />
+                  <Volume2 className="text-white w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="text-white font-bold leading-tight">Nexus ERP</h3>
@@ -488,7 +489,7 @@ BEHAVIOR:
                   </p>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={disconnect}
                 className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
               >
@@ -501,24 +502,23 @@ BEHAVIOR:
               {messages.length === 0 && !currentTranscription && (
                 <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-4">
                   <div className="w-20 h-20 rounded-full bg-teal-500/10 flex items-center justify-center border border-teal-500/20 shadow-[0_0_20px_rgba(20,184,166,0.1)]">
-                     <Mic className="text-teal-500 w-10 h-10" />
+                    <Mic className="text-teal-500 w-10 h-10" />
                   </div>
-                  <p className="text-slate-400 text-sm leading-relaxed">Welcome! I'm Nexus, your BC Assistant. <br/> How can I help you with Business Central today?</p>
+                  <p className="text-slate-400 text-sm leading-relaxed">Welcome! I'm Nexus, your BC Assistant. <br /> How can I help you with Business Central today?</p>
                 </div>
               )}
-              
+
               {messages.map((msg, i) => (
-                <motion.div 
+                <motion.div
                   key={i}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
-                  <div className={`max-w-[85%] p-3 rounded-2xl shadow-sm ${
-                    msg.role === 'user' 
-                      ? 'bg-teal-600 text-white rounded-tr-none' 
-                      : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-none'
-                  }`}>
+                  <div className={`max-w-[85%] p-3 rounded-2xl shadow-sm ${msg.role === 'user'
+                    ? 'bg-teal-600 text-white rounded-tr-none'
+                    : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-none'
+                    }`}>
                     <p className="text-sm">{msg.text}</p>
                     <span className="text-[10px] opacity-50 block mt-1">{msg.timestamp}</span>
                   </div>
@@ -527,7 +527,7 @@ BEHAVIOR:
 
               {currentTranscription && (
                 <div className="flex justify-end">
-                   <div className="max-w-[85%] p-3 bg-teal-600/30 text-white border border-teal-500/20 rounded-2xl rounded-tr-none italic animate-pulse">
+                  <div className="max-w-[85%] p-3 bg-teal-600/30 text-white border border-teal-500/20 rounded-2xl rounded-tr-none italic animate-pulse">
                     <p className="text-sm">{currentTranscription}</p>
                   </div>
                 </div>
@@ -537,79 +537,76 @@ BEHAVIOR:
 
             {/* Visualizer & Controls */}
             <div className="p-6 bg-slate-900/50 border-t border-slate-800 flex flex-col items-center gap-6">
-               <div className="flex gap-4">
-                 <button 
+              <div className="flex gap-4">
+                <button
                   onClick={sendTestMessage}
                   className="px-3 py-1 bg-teal-500/20 text-teal-400 border border-teal-500/30 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-teal-500/30 transition-all"
-                 >
+                >
                   Test Bot
-                 </button>
-               </div>
-               {/* Sphere Visualizer */}
-               <div className="relative w-32 h-32 flex items-center justify-center">
-                  <motion.div 
-                    animate={{ 
-                      scale: isSpeaking ? [1, 1.25, 1] : 1,
-                      opacity: isListening ? [0.4, 0.8, 0.4] : 0.6
-                    }}
-                    transition={{ repeat: Infinity, duration: 1.5 }}
-                    className={`absolute inset-0 rounded-full blur-3xl ${
-                      isSpeaking ? 'bg-emerald-500/40' : 'bg-teal-500/30'
+                </button>
+              </div>
+              {/* Sphere Visualizer */}
+              <div className="relative w-32 h-32 flex items-center justify-center">
+                <motion.div
+                  animate={{
+                    scale: isSpeaking ? [1, 1.25, 1] : 1,
+                    opacity: isListening ? [0.4, 0.8, 0.4] : 0.6
+                  }}
+                  transition={{ repeat: Infinity, duration: 1.5 }}
+                  className={`absolute inset-0 rounded-full blur-3xl ${isSpeaking ? 'bg-emerald-500/40' : 'bg-teal-500/30'
                     }`}
-                  />
-                  <motion.div 
-                    animate={{ 
-                      rotate: 360,
-                      scale: isSpeaking ? 1.15 : 1
-                    }}
-                    transition={{ rotate: { repeat: Infinity, duration: 15, ease: 'linear' } }}
-                    className={`w-24 h-24 rounded-full bg-gradient-to-br transition-all duration-700 overflow-hidden relative ${
-                      isSpeaking 
-                        ? 'from-emerald-400 via-teal-500 to-blue-600 shadow-[0_0_50px_rgba(16,185,129,0.5)]' 
-                        : 'from-teal-600 via-slate-800 to-slate-950 shadow-[0_0_30px_rgba(20,184,166,0.3)] border border-white/5'
+                />
+                <motion.div
+                  animate={{
+                    rotate: 360,
+                    scale: isSpeaking ? 1.15 : 1
+                  }}
+                  transition={{ rotate: { repeat: Infinity, duration: 15, ease: 'linear' } }}
+                  className={`w-24 h-24 rounded-full bg-gradient-to-br transition-all duration-700 overflow-hidden relative ${isSpeaking
+                    ? 'from-emerald-400 via-teal-500 to-blue-600 shadow-[0_0_50px_rgba(16,185,129,0.5)]'
+                    : 'from-teal-600 via-slate-800 to-slate-950 shadow-[0_0_30px_rgba(20,184,166,0.3)] border border-white/5'
                     }`}
-                  >
-                    {/* Inner highlight */}
-                    <div className="absolute top-2 left-6 w-12 h-6 bg-white/20 rounded-[50%] blur-sm rotate-[15deg]"></div>
-                  </motion.div>
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    {isSpeaking ? (
-                      <div className="flex gap-1 items-end h-4">
-                        {[1, 2, 3].map(i => (
-                          <motion.div 
-                            key={i}
-                            animate={{ height: [8, 16, 8] }}
-                            transition={{ repeat: Infinity, duration: 0.5, delay: i * 0.1 }}
-                            className="w-1 bg-white rounded-full"
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <Mic className="text-white/60 w-8 h-8" />
-                    )}
-                  </div>
-               </div>
+                >
+                  {/* Inner highlight */}
+                  <div className="absolute top-2 left-6 w-12 h-6 bg-white/20 rounded-[50%] blur-sm rotate-[15deg]"></div>
+                </motion.div>
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  {isSpeaking ? (
+                    <div className="flex gap-1 items-end h-4">
+                      {[1, 2, 3].map(i => (
+                        <motion.div
+                          key={i}
+                          animate={{ height: [8, 16, 8] }}
+                          transition={{ repeat: Infinity, duration: 0.5, delay: i * 0.1 }}
+                          className="w-1 bg-white rounded-full"
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <Mic className="text-white/60 w-8 h-8" />
+                  )}
+                </div>
+              </div>
 
-               <div className="flex items-center gap-6">
-                  <button 
-                    onClick={() => {
-                       const newVal = !isMuted;
-                       setIsMuted(newVal);
-                       isMutedRef.current = newVal;
-                    }}
-                    className={`p-4 rounded-full transition-all duration-300 ${
-                      isMuted ? 'bg-red-500/20 text-red-500 border border-red-500/30' : 'bg-slate-800 text-slate-400 hover:text-white border border-transparent'
+              <div className="flex items-center gap-6">
+                <button
+                  onClick={() => {
+                    const newVal = !isMuted;
+                    setIsMuted(newVal);
+                    isMutedRef.current = newVal;
+                  }}
+                  className={`p-4 rounded-full transition-all duration-300 ${isMuted ? 'bg-red-500/20 text-red-500 border border-red-500/30' : 'bg-slate-800 text-slate-400 hover:text-white border border-transparent'
                     }`}
-                  >
-                    {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
-                  </button>
-                  <button 
-                    onClick={disconnect}
-                    className="p-4 bg-red-600 hover:bg-red-700 text-white rounded-full shadow-lg transition-all active:scale-90 hover:scale-105"
-                  >
-                    <Power size={24} />
-                  </button>
-               </div>
+                >
+                  {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
+                </button>
+                <button
+                  onClick={disconnect}
+                  className="p-4 bg-red-600 hover:bg-red-700 text-white rounded-full shadow-lg transition-all active:scale-90 hover:scale-105"
+                >
+                  <Power size={24} />
+                </button>
+              </div>
             </div>
             {error && (
               <div className="p-2 bg-red-500/10 text-red-500 text-[10px] text-center border-t border-red-500/20">
@@ -622,7 +619,7 @@ BEHAVIOR:
 
       {/* Launcher Button */}
       {!isConnected && (
-         <button 
+        <button
           onClick={connect}
           className="w-16 h-16 bg-gradient-to-br from-teal-500 to-emerald-600 rounded-full shadow-[0_10px_40px_rgba(20,184,166,0.5)] flex items-center justify-center text-white transition-all hover:scale-110 active:scale-95 group relative overflow-hidden"
         >
