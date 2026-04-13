@@ -23,9 +23,6 @@ interface VoiceBotProps {
 }
 
 export default function VoiceBot({ apiKey: propApiKey, initialPersona }: VoiceBotProps) {
-
-  console.log(" process.env.API_KEY process.env.API_KEY", process.env.NEXT_PUBLIC_API_KEY);
-
   // --- State ---
   const [apiKey] = useState(propApiKey || process.env.NEXT_PUBLIC_API_KEY || '');
   const [isConnected, setIsConnected] = useState(false);
