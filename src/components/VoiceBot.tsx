@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, MicOff, X, MessageSquare, Power, Volume2, VolumeX, Terminal } from 'lucide-react';
+import { log } from 'console';
 
 // --- Constants ---
 const MODEL_NAME = 'gemini-2.5-flash-native-audio-latest'; // Reverted to supportive model
@@ -22,9 +23,11 @@ interface VoiceBotProps {
 }
 
 export default function VoiceBot({ apiKey: propApiKey, initialPersona }: VoiceBotProps) {
+
+  console.log(" process.env.API_KEY process.env.API_KEY", process.env.NEXT_PUBLIC_API_KEY);
+
   // --- State ---
-  // const [apiKey] = useState(propApiKey || 'AIzaSyA0vPgn-f798YZbJIhJyL3njB4lSNLlMxU');
-  const [apiKey] = useState(propApiKey || 'AIzaSyBuqKC2HiOKMYjpx3AKVrGY2BfofJz8trI');
+  const [apiKey] = useState(propApiKey || process.env.NEXT_PUBLIC_API_KEY || '');
   const [isConnected, setIsConnected] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
