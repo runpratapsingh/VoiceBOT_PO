@@ -9,7 +9,30 @@ import { useState, useEffect, useCallback } from 'react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export type FlowType = 'NONE' | 'PO' | 'DATA_ENTRY';
 export type POStep = 'idle' | 'vendor' | 'item' | 'quantity' | 'price' | 'deliveryDate' | 'confirm' | 'done';
+
+export interface NavHeader {
+  batcH_NO: string;
+  [key: string]: unknown;
+}
+
+export interface NavLine {
+  iteM_NAME: string;
+  actuaL_VALUE: number;
+  [key: string]: unknown;
+}
+
+export interface NavData {
+  status: string;
+  message: string;
+  data: {
+    header: NavHeader[];
+    line: NavLine[];
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
 
 export interface POState {
   vendor: string;
@@ -20,6 +43,8 @@ export interface POState {
   currentStep: POStep;
   isActive: boolean;
   sessionId: string;
+  activeFlow: FlowType;
+  navData: NavData | null;
 }
 
 export interface ChatMessage {
@@ -46,6 +71,7 @@ export interface FullStore {
   history: ChatMessage[];
   savedChats: SavedChat[];
   activeSavedChatId?: string | null;
+  language: 'en' | 'ar';
 }
 
 // ─── Default state ─────────────────────────────────────────────────────────────
@@ -59,6 +85,8 @@ const DEFAULT_PO: POState = {
   currentStep: 'idle',
   isActive: false,
   sessionId: '',
+  activeFlow: 'NONE',
+  navData: null,
 };
 
 const STORAGE_KEY = 'erp_po_session';
@@ -150,7 +178,9 @@ function hasSamePOState(a: POState | undefined, b: POState): boolean {
     a.deliveryDate === b.deliveryDate &&
     a.currentStep === b.currentStep &&
     a.isActive === b.isActive &&
-    a.sessionId === b.sessionId;
+    a.sessionId === b.sessionId &&
+    a.activeFlow === b.activeFlow &&
+    JSON.stringify(a.navData) === JSON.stringify(b.navData);
 }
 
 function hasSameSavedChatContent(a: SavedChat, b: SavedChat): boolean {
@@ -187,6 +217,7 @@ export function usePOStore() {
   const [savedChats, setSavedChats] = useState<SavedChat[]>([]);
   const [viewingSavedChat, setViewingSavedChat] = useState<SavedChat | null>(null);
   const [activeSavedChatId, setActiveSavedChatId] = useState<string | null>(null);
+  const [language, setLanguage] = useState<'en' | 'ar'>('en');
   const [hydrated, setHydrated] = useState(false);
 
   // Hydrate from localStorage on mount
@@ -199,6 +230,7 @@ export function usePOStore() {
       setHistory((saved.history || []).filter(m => !m.isToolCall));
       setSavedChats(saved.savedChats || []);
       setActiveSavedChatId(saved.activeSavedChatId ?? null);
+      setLanguage(saved.language || 'en');
     }
     setHydrated(true);
   }, []);
@@ -207,8 +239,8 @@ export function usePOStore() {
   // Auto-save on every change
   useEffect(() => {
     if (!hydrated) return;
-    saveSession({ po, history, savedChats, activeSavedChatId });
-  }, [po, history, savedChats, activeSavedChatId, hydrated]);
+    saveSession({ po, history, savedChats, activeSavedChatId, language });
+  }, [po, history, savedChats, activeSavedChatId, language, hydrated]);
 
   const syncActiveSavedChat = useCallback((messages: ChatMessage[]) => {
     if (!activeSavedChatId || messages.length === 0) return;
@@ -246,6 +278,8 @@ export function usePOStore() {
     setPo(prev => ({
       ...prev,
       isActive: true,
+      activeFlow: 'PO',
+      navData: null,
       currentStep: 'vendor',
       sessionId,
       vendor: '',
@@ -382,6 +416,7 @@ export function usePOStore() {
 
   const startNewChat = useCallback(() => {
     saveCurrentChat({ linkActiveChat: false });
+    setPo({ ...DEFAULT_PO, sessionId: '' });
     clearMessages();
   }, [saveCurrentChat, clearMessages]);
 
@@ -411,6 +446,56 @@ export function usePOStore() {
     });
   }, [syncActiveSavedChat]);
 
+  // ── NavData Actions ──
+
+  const startDataEntry = useCallback((initialData: NavData) => {
+    const sessionId = Date.now().toString();
+    const navData = JSON.parse(JSON.stringify(initialData)) as NavData;
+    if (navData.data?.header?.[0]) {
+      navData.data.header[0].batcH_NO = '';
+    }
+    setPo(prev => ({
+      ...prev,
+      isActive: true,
+      activeFlow: 'DATA_ENTRY',
+      navData,
+      sessionId,
+    }));
+  }, []);
+
+  const updateNavBatch = useCallback((batchNo: string) => {
+    setPo(prev => {
+      if (!prev.navData?.data) return prev;
+      const updatedNavData = { ...prev.navData };
+      updatedNavData.data = { ...updatedNavData.data };
+      if (updatedNavData.data.header[0]) {
+        updatedNavData.data.header[0].batcH_NO = batchNo;
+      }
+      return { ...prev, navData: updatedNavData };
+    });
+  }, []);
+
+  const updateNavItemQuantity = useCallback((itemName: string, quantity: number) => {
+    setPo(prev => {
+      if (!prev.navData?.data) return prev;
+      const updatedNavData = { ...prev.navData };
+      updatedNavData.data = { ...updatedNavData.data };
+      updatedNavData.data.line = [...updatedNavData.data.line];
+      
+      const lineIndex = updatedNavData.data.line.findIndex(l => 
+        String(l.iteM_NAME || l.parameteR_NAME || '').toLowerCase().trim() === itemName.toLowerCase().trim()
+      );
+      if (lineIndex !== -1) {
+        updatedNavData.data.line[lineIndex].actuaL_VALUE = quantity;
+      }
+      return { ...prev, navData: updatedNavData };
+    });
+  }, []);
+
+  const resetDataEntry = useCallback(() => {
+    setPo(prev => ({ ...prev, activeFlow: 'NONE', isActive: false, navData: null }));
+  }, []);
+
   return {
     po,
     history,
@@ -428,6 +513,11 @@ export function usePOStore() {
     resetPO,
     confirmPO,
     setPo,
+    // NavData actions
+    startDataEntry,
+    updateNavBatch,
+    updateNavItemQuantity,
+    resetDataEntry,
     // Chat actions
     addMessage,
     updateLastBotMessage,
@@ -438,5 +528,7 @@ export function usePOStore() {
     loadSavedChat,
     resumeActiveChat,
     finalizeStreaming,
+    language,
+    setLanguage,
   };
 }
