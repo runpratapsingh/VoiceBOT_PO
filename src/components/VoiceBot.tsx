@@ -37,8 +37,7 @@ import {
 import { SYSTEM_INSTRUCTION, PO_TOOLS } from "@/services/aiConfig";
 
 import { INITIAL_NAV_DATA } from "@/services/navData";
-import { translations } from "@/lib/translations";
-import { Languages } from "lucide-react";
+import axios from "axios";
 
 // --- Constants ---
 const MODEL_NAME = "gemini-2.5-flash-native-audio-latest";
@@ -217,8 +216,6 @@ export default function VoiceBot() {
     updateNavBatch,
     updateNavItemQuantity,
     resetDataEntry,
-    language,
-    setLanguage,
   } = usePOStore();
 
   const messages = viewingSavedChat
@@ -231,8 +228,6 @@ export default function VoiceBot() {
   const [isMuted, setIsMuted] = useState(false);
   const [inputText, setInputText] = useState("");
   const [status, setStatus] = useState<VoiceStatus>("idle");
-
-  const t = translations[language];
   const [error, setError] = useState<string | null>(null);
   const [isTextSending, setIsTextSending] = useState(false);
   const [sessionResumePrompt, setSessionResumePrompt] = useState(false);
@@ -259,6 +254,49 @@ export default function VoiceBot() {
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
+
+
+
+  const fetchData = async () => {
+    try {
+      const username = "xYvN7EOnhzdnTinyuq8amuhzRaBxNeOeeJyrp3/L0+Y=";
+      const password = "f4eqUIMzUI4UyBwnFJOPhji8D2umvEC2GzJFDOmRzB8=";
+      const token = "WnAxOHdiU1Rvb1JPUVJMR3ZyS20wUVBsNklmeHo2UHRPZzFUWWFqMjV0Yz06UXRvbWEgRmFybToxNzc3MzEyMDM4";
+
+      console.log("usernameusernameusernameusername", username, password);
+
+
+      function getBasicAuthHeader(username: string, password: string) {
+        return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+      }
+
+      const response = await axios({
+        url: "http://agriapitest.navfarm.com/api/get_dataentry_details",
+        method: "GET",
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: getBasicAuthHeader(username, password),
+          authToken: token,
+        },
+        params: {
+          Company_Id: 275,
+          batch_id: 124,
+        }
+      })
+
+      console.log("NavFarm API Response:", response.data.data.header[0]);
+
+      return response.data.data.header[0];
+    } catch (error) {
+      console.log("error fetch details", error);
+
+    }
+  }
+
+  useEffect(() => {
+    fetchData()
+  }, [])
 
   // --- Show toast helper ---
   const showToast = (msg: string) => {
@@ -388,7 +426,7 @@ export default function VoiceBot() {
     activeSourcesRef.current.forEach((source) => {
       try {
         source.stop();
-      } catch {}
+      } catch { }
     });
     activeSourcesRef.current.clear();
     nextStartTimeRef.current = 0;
@@ -456,6 +494,8 @@ export default function VoiceBot() {
       }) ?? null
     );
   }, []);
+
+
 
   const handleAction = async (
     call: ToolCallRequest,
@@ -605,7 +645,11 @@ export default function VoiceBot() {
         return { success: false, error: "No data entry session active." };
       }
 
-      const h = navData.data.header[0] || {};
+
+
+      // const h = navData.data.header[0] || {};
+      const h = await fetchData() || {};
+
       const header = {
         DATAENTRY_ID: intValue(h.dataentrY_ID),
         NOB_ID: intValue(h.noB_ID),
@@ -729,7 +773,7 @@ export default function VoiceBot() {
       if (closeSession && sessionRef.current) {
         try {
           sessionRef.current.close();
-        } catch {}
+        } catch { }
       }
 
       sessionRef.current = null;
@@ -789,7 +833,7 @@ export default function VoiceBot() {
       const sessionPromise = ai.live.connect({
         model: MODEL_NAME,
         config: {
-          systemInstruction: `${SYSTEM_INSTRUCTION}\n\nIMPORTANT: You must communicate with the user entirely in ${language === 'ar' ? 'Arabic (العربية)' : 'English'}. All your verbal and text responses must be in ${language === 'ar' ? 'Arabic' : 'English'}.`,
+          systemInstruction: SYSTEM_INSTRUCTION,
           tools: PO_TOOLS,
           responseModalities: ["AUDIO"],
           inputAudioTranscription: {},
@@ -825,7 +869,7 @@ export default function VoiceBot() {
                   sessionRef.current.sendRealtimeInput?.({
                     media: { data: pcmData, mimeType: "audio/pcm;rate=16000" },
                   });
-                } catch {}
+                } catch { }
               }
             };
             source.connect(scriptProcessor);
@@ -1130,32 +1174,39 @@ export default function VoiceBot() {
   const getInsights = () => [
     {
       icon: TrendingUp,
-      label: t.insights.volume,
-      value: t.insights.volumeVal,
+      label: "PO Volume",
+      value: "↑ 12% this week",
       color: "text-emerald-500",
     },
     {
       icon: ClipboardList,
-      label: t.insights.open,
-      value: t.insights.openVal,
+      label: "Open Orders",
+      value: "7 pending approval",
       color: "text-amber-500",
     },
     {
       icon: CheckCircle2,
-      label: t.insights.completed,
-      value: t.insights.completedVal,
+      label: "Completed",
+      value: "23 this month",
       color: "text-blue-500",
     },
   ];
 
-  const getAlerts = () => t.alerts;
+  const getAlerts = () => [
+    { text: "Bosch delivery overdue by 2 days", urgent: true },
+    { text: "Stock low: Hammer SKU-4421", urgent: true },
+    { text: "New vendor quote received", urgent: false },
+  ];
 
-  const getActions = () => t.actions;
+  const getActions = () => [
+    "Create Purchase Order",
+    "Check Stock Levels",
+    "Review Pending Approvals",
+    "Contact Vendor",
+  ];
 
   return (
-    <div 
-      className="flex h-screen bg-slate-100 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 transition-colors duration-300 overflow-hidden font-sans"
-    >
+    <div className="flex h-screen bg-slate-100 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 transition-colors duration-300 overflow-hidden font-sans">
       {/* ── MOBILE BACKDROPS ── */}
       <AnimatePresence>
         {isMobile && sidebarOpen && (
@@ -1189,11 +1240,10 @@ export default function VoiceBot() {
             animate={isMobile ? { x: 0 } : { width: 260, opacity: 1 }}
             exit={isMobile ? { x: -280 } : { width: 0, opacity: 0 }}
             transition={{ duration: 0.25, ease: "easeInOut" }}
-            className={`flex flex-col bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 overflow-hidden flex-shrink-0 z-40 ${
-              isMobile
-                ? "fixed inset-y-0 left-0 w-[280px] shadow-2xl"
-                : "relative"
-            }`}
+            className={`flex flex-col bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 overflow-hidden flex-shrink-0 z-40 ${isMobile
+              ? "fixed inset-y-0 left-0 w-[280px] shadow-2xl"
+              : "relative"
+              }`}
           >
             {/* Logo */}
             <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-3">
@@ -1204,10 +1254,10 @@ export default function VoiceBot() {
               />
               <div className="min-w-0">
                 <p className="font-bold text-sm leading-none text-zinc-900 dark:text-zinc-100 truncate">
-                  {t.title}
+                  Prudence ERP
                 </p>
                 <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">
-                  {t.subtitle}
+                  AI Assistant
                 </p>
               </div>
             </div>
@@ -1226,14 +1276,14 @@ export default function VoiceBot() {
                 className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold transition-all hover:shadow-md"
               >
                 <Plus size={16} />
-                {t.sidebar.newChat}
+                New Conversation
               </button>
             </div>
 
             {/* History */}
             <div className="flex-1 overflow-y-auto px-2 pb-4 scrollbar-hide">
               <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600 px-2 py-2">
-                {t.sidebar.history} ({savedChats.length})
+                History ({savedChats.length})
               </p>
               {savedChats.length === 0 && (
                 <p className="text-xs text-zinc-400 dark:text-zinc-500 px-3 italic">
@@ -1275,10 +1325,10 @@ export default function VoiceBot() {
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 truncate">
-                    {t.settings.user}
+                    Admin User
                   </p>
                   <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                    {t.settings.env}
+                    Production Env
                   </p>
                 </div>
               </div>
@@ -1311,7 +1361,7 @@ export default function VoiceBot() {
           {/* Center: Assistant Name + Status */}
           <div className="flex flex-col items-center">
             <h1 className="font-bold text-base leading-tight text-zinc-900 dark:text-zinc-100">
-              {t.title}
+              AI Agent
             </h1>
             <div className="flex items-center gap-1.5">
               <div
@@ -1321,7 +1371,7 @@ export default function VoiceBot() {
                 {status === "thinking" && (
                   <Loader2 className="w-2.5 h-2.5 animate-spin" />
                 )}
-                {t.status[status]}
+                {STATUS_LABELS[status]}
               </p>
             </div>
           </div>
@@ -1334,7 +1384,7 @@ export default function VoiceBot() {
                 <button
                   onClick={() => {
                     saveCurrentChat();
-                    showToast(t.settings.chatSaved);
+                    showToast("Chat saved!");
                   }}
                   className="p-1.5 sm:p-2 flex items-center gap-1.5 rounded-lg text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors text-xs font-semibold"
                   title="Save this conversation to history"
@@ -1352,17 +1402,6 @@ export default function VoiceBot() {
                 <div className="w-px h-5 sm:h-6 bg-zinc-200 dark:bg-zinc-800 mx-0.5 sm:mx-1"></div>
               </>
             )}
-
-            <button
-              onClick={() => setLanguage(language === "en" ? "ar" : "en")}
-              className="p-1.5 sm:p-2 rounded-lg text-zinc-400 dark:text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-emerald-500 transition-colors flex items-center gap-1.5 px-2.5"
-              title={t.settings.language}
-            >
-              <Languages size={17} />
-              <span className="text-[10px] font-black uppercase tracking-tight">
-                {language === "en" ? "AR" : "EN"}
-              </span>
-            </button>
 
             <button
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -1530,7 +1569,7 @@ export default function VoiceBot() {
                   />
                 ))}
                 <span className="ml-3 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                  {isSpeaking ? t.status.speaking : t.status.listening}
+                  {isSpeaking ? "Speaking..." : "Listening..."}
                 </span>
               </div>
             )}
@@ -1543,10 +1582,11 @@ export default function VoiceBot() {
                     <Bot size={28} className="text-white" />
                   </div>
                   <h3 className="text-xl md:text-2xl font-bold mb-3 text-zinc-800 dark:text-zinc-100">
-                    {t.chat.welcome}
+                    How can I help you today?
                   </h3>
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 leading-relaxed px-4">
-                    {t.chat.welcomeSub}
+                    Create purchase orders, check inventory, manage vendors, or
+                    ask anything ERP-related.
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-8 w-full">
                     {getActions().map((action) => (
@@ -1575,11 +1615,10 @@ export default function VoiceBot() {
                   >
                     {/* Avatar */}
                     <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1 ${
-                        msg.role === "user"
-                          ? "bg-gradient-to-br from-emerald-400 to-emerald-600 text-white"
-                          : "bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-emerald-500"
-                      }`}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1 ${msg.role === "user"
+                        ? "bg-gradient-to-br from-emerald-400 to-emerald-600 text-white"
+                        : "bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-emerald-500"
+                        }`}
                     >
                       {msg.role === "user" ? (
                         <User size={14} />
@@ -1594,24 +1633,22 @@ export default function VoiceBot() {
                     >
                       <div className="flex items-center gap-2 mb-1.5">
                         <span
-                          className={`text-[11px] font-bold ${
-                            msg.role === "user"
-                              ? "text-zinc-500 dark:text-zinc-400"
-                              : "text-emerald-600 dark:text-emerald-400"
-                          }`}
+                          className={`text-[11px] font-bold ${msg.role === "user"
+                            ? "text-zinc-500 dark:text-zinc-400"
+                            : "text-emerald-600 dark:text-emerald-400"
+                            }`}
                         >
-                          {msg.role === "user" ? t.chat.you : t.chat.ai}
+                          {msg.role === "user" ? "You" : "AI Assistance"}
                         </span>
                         <span className="text-[10px] text-zinc-300 dark:text-zinc-600">
                           {msg.timestamp}
                         </span>
                       </div>
                       <div
-                        className={`px-4 py-3 rounded-2xl text-[14px] leading-relaxed whitespace-pre-wrap break-words shadow-sm ${
-                          msg.role === "user"
-                            ? "bg-emerald-600 dark:bg-emerald-500 text-white rounded-tr-sm"
-                            : "bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-100 rounded-tl-sm"
-                        }`}
+                        className={`px-4 py-3 rounded-2xl text-[14px] leading-relaxed whitespace-pre-wrap break-words shadow-sm ${msg.role === "user"
+                          ? "bg-emerald-600 dark:bg-emerald-500 text-white rounded-tr-sm"
+                          : "bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-100 rounded-tl-sm"
+                          }`}
                       >
                         {formatMessageText(msg.text)}
                         {msg.isStreaming && (
@@ -1628,7 +1665,7 @@ export default function VoiceBot() {
                           messages[messages.length - 1]?.id === msg.id && (
                             <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-2 w-full min-w-[240px]">
                               <p className="col-span-full text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-1">
-                                {t.chat.selectItem}
+                                Select an Item:
                               </p>
                               {po.navData?.data?.line.map((line, idx) => (
                                 <button
@@ -1648,7 +1685,7 @@ export default function VoiceBot() {
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
                                     <div>
                                       <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                        {t.chat.paramType}
+                                        Parameter Type
                                       </p>
                                       <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
                                         {displayValue(line.parameteR_TYPE)}
@@ -1656,7 +1693,7 @@ export default function VoiceBot() {
                                     </div>
                                     <div>
                                       <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                        {t.chat.paramName}
+                                        Parameter Name
                                       </p>
                                       <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
                                         {displayValue(line.parameteR_NAME)}
@@ -1664,7 +1701,7 @@ export default function VoiceBot() {
                                     </div>
                                     <div>
                                       <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                        {t.chat.costPerUnit}
+                                        Cost Per Unit
                                       </p>
                                       <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200">
                                         {displayValue(line.uniT_COST)}
@@ -1672,7 +1709,7 @@ export default function VoiceBot() {
                                     </div>
                                     <div>
                                       <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                        {t.chat.itemName}
+                                        Item Name
                                       </p>
                                       <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200 break-words">
                                         {displayValue(line.iteM_NAME)}
@@ -1680,7 +1717,7 @@ export default function VoiceBot() {
                                     </div>
                                     <div>
                                       <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                        {t.chat.stock}
+                                        Stock
                                       </p>
                                       <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200">
                                         {displayValue(line.stock)}
@@ -1712,13 +1749,12 @@ export default function VoiceBot() {
                     }
                     void connect();
                   }}
-                  className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 transition-all shadow-sm ${
-                    viewingSavedChat
-                      ? "bg-zinc-100 text-zinc-400 cursor-not-allowed opacity-50 dark:bg-zinc-800 dark:text-zinc-500"
-                      : isConnected
-                        ? "bg-rose-500 text-white scale-95"
-                        : "bg-emerald-500 text-white hover:bg-emerald-600 hover:scale-105"
-                  }`}
+                  className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 transition-all shadow-sm ${viewingSavedChat
+                    ? "bg-zinc-100 text-zinc-400 cursor-not-allowed opacity-50 dark:bg-zinc-800 dark:text-zinc-500"
+                    : isConnected
+                      ? "bg-rose-500 text-white scale-95"
+                      : "bg-emerald-500 text-white hover:bg-emerald-600 hover:scale-105"
+                    }`}
                   title={
                     viewingSavedChat
                       ? "Cannot use voice in past chats"
@@ -1732,11 +1768,10 @@ export default function VoiceBot() {
 
                 {/* Text Input */}
                 <div
-                  className={`flex-1 flex items-center border rounded-2xl px-4 py-2.5 gap-2 transition-all ${
-                    viewingSavedChat
-                      ? "bg-zinc-50 dark:bg-zinc-800/40 border-zinc-200 dark:border-zinc-700/40 opacity-70 cursor-not-allowed"
-                      : "bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 focus-within:border-emerald-400 dark:focus-within:border-emerald-500"
-                  }`}
+                  className={`flex-1 flex items-center border rounded-2xl px-4 py-2.5 gap-2 transition-all ${viewingSavedChat
+                    ? "bg-zinc-50 dark:bg-zinc-800/40 border-zinc-200 dark:border-zinc-700/40 opacity-70 cursor-not-allowed"
+                    : "bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 focus-within:border-emerald-400 dark:focus-within:border-emerald-500"
+                    }`}
                 >
                   <input
                     disabled={viewingSavedChat !== null}
@@ -1744,10 +1779,10 @@ export default function VoiceBot() {
                     onChange={(e) => setInputText(e.target.value)}
                     placeholder={
                       viewingSavedChat
-                        ? t.chat.viewingPast
+                        ? "Viewing past chat. Return to active chat to type."
                         : isConnected
-                          ? t.chat.speakPlaceholder
-                          : t.chat.placeholder
+                          ? "Speak or type a message..."
+                          : "Type a message..."
                     }
                     className="flex-1 bg-transparent border-none focus:ring-0 text-sm text-zinc-800 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 outline-none disabled:bg-transparent disabled:cursor-not-allowed"
                     onKeyDown={(e) =>
@@ -1763,13 +1798,12 @@ export default function VoiceBot() {
                         return next;
                       });
                     }}
-                    className={`flex-shrink-0 p-1 rounded-lg transition-colors ${
-                      viewingSavedChat
-                        ? "opacity-50 cursor-not-allowed"
-                        : isMuted
-                          ? "text-rose-500"
-                          : "text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300"
-                    }`}
+                    className={`flex-shrink-0 p-1 rounded-lg transition-colors ${viewingSavedChat
+                      ? "opacity-50 cursor-not-allowed"
+                      : isMuted
+                        ? "text-rose-500"
+                        : "text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300"
+                      }`}
                   >
                     {isMuted ? <VolumeX size={17} /> : <Volume2 size={17} />}
                   </button>
@@ -1794,7 +1828,7 @@ export default function VoiceBot() {
                 </button>
               </div>
               <p className="text-[10px] text-center text-zinc-300 dark:text-zinc-600 mt-2">
-                {t.settings.footer}
+                Prudence ERP AI · Powered by GPT-4o + Gemini Live
               </p>
             </footer>
           </main>
@@ -1807,18 +1841,17 @@ export default function VoiceBot() {
                 animate={isMobile ? { x: 0 } : { width: 280, opacity: 1 }}
                 exit={isMobile ? { x: 280 } : { width: 0, opacity: 0 }}
                 transition={{ duration: 0.25, ease: "easeInOut" }}
-                className={`flex flex-col bg-white dark:bg-zinc-900 border-l border-zinc-200 dark:border-zinc-800 overflow-hidden flex-shrink-0 z-40 ${
-                  isMobile
-                    ? "fixed inset-y-0 right-0 w-[280px] shadow-[-10px_0_30px_rgba(0,0,0,0.1)]"
-                    : "relative"
-                }`}
+                className={`flex flex-col bg-white dark:bg-zinc-900 border-l border-zinc-200 dark:border-zinc-800 overflow-hidden flex-shrink-0 z-40 ${isMobile
+                  ? "fixed inset-y-0 right-0 w-[280px] shadow-[-10px_0_30px_rgba(0,0,0,0.1)]"
+                  : "relative"
+                  }`}
               >
                 <div className="p-4 border-b border-zinc-200 dark:border-zinc-800">
                   <h2 className="font-bold text-sm text-zinc-800 dark:text-zinc-100">
-                    {t.insights.title}
+                    ERP Insights
                   </h2>
                   <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">
-                    {t.insights.subtitle}
+                    Live data · Updated now
                   </p>
                 </div>
 
@@ -1826,7 +1859,7 @@ export default function VoiceBot() {
                   {/* Insights */}
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600 px-1 mb-2 flex items-center gap-1">
-                      <TrendingUp size={10} /> {t.insights.header}
+                      <TrendingUp size={10} /> Insights
                     </p>
                     {getInsights().map((item) => (
                       <div
@@ -1849,28 +1882,25 @@ export default function VoiceBot() {
                   {/* Alerts */}
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600 px-1 mb-2 flex items-center gap-1">
-                      <Bell size={10} /> {t.insights.alerts}
+                      <Bell size={10} /> Alerts
                     </p>
                     {getAlerts().map((alert, i) => (
                       <div
                         key={i}
-                        className={`flex items-start gap-2 px-3 py-2.5 rounded-xl mb-1.5 ${
-                          alert.urgent
-                            ? "bg-rose-50 dark:bg-rose-900/20"
-                            : "bg-zinc-50 dark:bg-zinc-800"
-                        }`}
+                        className={`flex items-start gap-2 px-3 py-2.5 rounded-xl mb-1.5 ${alert.urgent
+                          ? "bg-rose-50 dark:bg-rose-900/20"
+                          : "bg-zinc-50 dark:bg-zinc-800"
+                          }`}
                       >
                         <div
-                          className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${
-                            alert.urgent ? "bg-rose-500" : "bg-zinc-400"
-                          }`}
+                          className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${alert.urgent ? "bg-rose-500" : "bg-zinc-400"
+                            }`}
                         />
                         <p
-                          className={`text-[12px] leading-snug ${
-                            alert.urgent
-                              ? "text-rose-700 dark:text-rose-400 font-medium"
-                              : "text-zinc-500 dark:text-zinc-400"
-                          }`}
+                          className={`text-[12px] leading-snug ${alert.urgent
+                            ? "text-rose-700 dark:text-rose-400 font-medium"
+                            : "text-zinc-500 dark:text-zinc-400"
+                            }`}
                         >
                           {alert.text}
                         </p>
@@ -1881,7 +1911,7 @@ export default function VoiceBot() {
                   {/* Recommended Actions */}
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600 px-1 mb-2 flex items-center gap-1">
-                      <Zap size={10} /> {t.insights.actions}
+                      <Zap size={10} /> Recommended Actions
                     </p>
                     {getActions().map((action) => (
                       <button
@@ -1904,7 +1934,7 @@ export default function VoiceBot() {
                   {po.activeFlow === "DATA_ENTRY" && po.navData?.data?.line && (
                     <div className="mt-2">
                       <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600 px-1 mb-2 flex items-center gap-1">
-                        <ClipboardList size={10} /> {t.insights.dataEntryItems}
+                        <ClipboardList size={10} /> Data Entry Items
                       </p>
                       <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1 scrollbar-hide">
                         {po.navData.data.line.map((line, idx) => (
@@ -1919,11 +1949,10 @@ export default function VoiceBot() {
                                 sendBtn?.click();
                               }, 100);
                             }}
-                            className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all group ${
-                              line.actuaL_VALUE > 0
-                                ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800"
-                                : "bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 hover:border-emerald-500"
-                            }`}
+                            className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all group ${line.actuaL_VALUE > 0
+                              ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800"
+                              : "bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 hover:border-emerald-500"
+                              }`}
                           >
                             <div className="grid grid-cols-1 gap-2">
                               <div>
@@ -1931,11 +1960,10 @@ export default function VoiceBot() {
                                   Parameter Type
                                 </p>
                                 <p
-                                  className={`text-[12px] font-semibold leading-tight ${
-                                    line.actuaL_VALUE > 0
-                                      ? "text-emerald-700 dark:text-emerald-400"
-                                      : "text-zinc-700 dark:text-zinc-200 group-hover:text-emerald-500"
-                                  }`}
+                                  className={`text-[12px] font-semibold leading-tight ${line.actuaL_VALUE > 0
+                                    ? "text-emerald-700 dark:text-emerald-400"
+                                    : "text-zinc-700 dark:text-zinc-200 group-hover:text-emerald-500"
+                                    }`}
                                 >
                                   {displayValue(line.parameteR_TYPE)}
                                 </p>
@@ -2001,7 +2029,7 @@ export default function VoiceBot() {
                     ) && (
                       <div className="mt-2">
                         <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600 px-1 mb-2 flex items-center gap-1">
-                          <ClipboardList size={10} /> {t.insights.activePODraft}
+                          <ClipboardList size={10} /> Active PO Draft
                         </p>
                         <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3">
                           {(
@@ -2019,7 +2047,7 @@ export default function VoiceBot() {
                                 className="flex justify-between items-center py-1"
                               >
                                 <span className="text-[11px] text-zinc-500 dark:text-zinc-400 capitalize">
-                                  {t.poSummary[key as keyof typeof t.poSummary] || key}
+                                  {key}
                                 </span>
                                 <span className="text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
                                   {String(po[key])}
