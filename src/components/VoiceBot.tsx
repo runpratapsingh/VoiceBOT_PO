@@ -271,7 +271,7 @@ export default function VoiceBot() {
       }
 
       const response = await axios({
-        url: "http://agriapitest.navfarm.com/api/get_dataentry_details",
+        url: "https://agriapitest.navfarm.com/api/get_dataentry_details",
         method: "GET",
         headers: {
           Accept: 'application/json',

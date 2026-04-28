@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
-const DEFAULT_NAVFARM_INSERT_URL = 'http://agriapitest.navfarm.com/api/insert_dataentry';
+const DEFAULT_NAVFARM_INSERT_URL = 'https://agriapitest.navfarm.com/api/insert_dataentry';
 
 function getBasicAuthHeader(username: string, password: string) {
   return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
