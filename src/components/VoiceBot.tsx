@@ -31,13 +31,14 @@ import {
 import {
   usePOStore,
   getMissingFields,
+  type NavData,
   type NavLine,
   type POState,
 } from "@/store/usePOStore";
 import { SYSTEM_INSTRUCTION, PO_TOOLS } from "@/services/aiConfig";
 
 import { INITIAL_NAV_DATA } from "@/services/navData";
-import axios from "axios";
+import GoogleTranslate from "@/components/GoogleTranslate";
 
 // --- Constants ---
 const MODEL_NAME = "gemini-2.5-flash-native-audio-latest";
@@ -55,6 +56,62 @@ const STATUS_LABELS = {
   speaking: "Speaking",
   error: "Error",
 } as const;
+const DEFAULT_BATCH_SUMMARY_REQUEST = {
+  Company_Id: "275",
+  nature_id: "5",
+  Location_Id: "1",
+} as const;
+
+const INVENTORY_ITEMS = [
+  {
+    itemName: "Hammer",
+    sku: "SKU-4421",
+    quantity: 8,
+    unit: "units",
+    reorderPoint: 15,
+    vendor: "Bosch",
+  },
+  {
+    itemName: "Safety Gloves",
+    sku: "SKU-1180",
+    quantity: 42,
+    unit: "pairs",
+    reorderPoint: 25,
+    vendor: "SafeWorks",
+  },
+  {
+    itemName: "Layer Feed",
+    sku: "SKU-7602",
+    quantity: 320,
+    unit: "bags",
+    reorderPoint: 150,
+    vendor: "AgriFeeds",
+  },
+] as const;
+
+const PENDING_APPROVALS = [
+  {
+    id: "PO-1048",
+    vendor: "Bosch",
+    amount: "INR 24,500",
+    age: "2 days",
+    owner: "Procurement Manager",
+  },
+  {
+    id: "PO-1051",
+    vendor: "AgriFeeds",
+    amount: "INR 18,900",
+    age: "1 day",
+    owner: "Finance",
+  },
+  {
+    id: "PO-1052",
+    vendor: "Qutoma Farm",
+    amount: "INR 8,750",
+    age: "today",
+    owner: "Operations",
+  },
+] as const;
 
 type VoiceStatus = keyof typeof STATUS_LABELS;
 
@@ -74,7 +131,14 @@ type ToolCallRequest = {
     value?: string;
     batch_no?: string;
     item_name?: string;
+    item?: string;
+    sku?: string;
     quantity?: number | string;
+    vendor_name?: string;
+    vendor?: string;
+    supplier?: string;
+    message?: string;
+    channel?: string;
   };
 };
 
@@ -83,6 +147,32 @@ type ToolCallResponse = {
   message?: string;
   po_number?: string;
   error?: string;
+  data?: unknown;
+};
+
+type LiveFunctionResponse = {
+  id?: string;
+  name: string;
+  response: Record<string, unknown>;
+};
+
+type BatchSummary = {
+  batch_id: number;
+  batch_no: string;
+  start_date: string;
+  opening_stocks: number;
+  remaining_stocks: number;
+  last_entry_date: string;
+  remark: string;
+  status: string;
+};
+
+type BatchSummaryGroup = {
+  nob_id: string;
+  nature_of_business: string;
+  line_of_business: string;
+  lob_id: string;
+  batches: BatchSummary[];
 };
 
 type LiveMessage = {
@@ -107,7 +197,25 @@ type LiveSession = {
   close: () => void;
   send?: (payload: unknown) => void;
   sendMessage?: (payload: unknown) => void;
+  sendClientContent?: (payload: {
+    turns: Array<{ role: "user"; parts: Array<{ text: string }> }>;
+    turnComplete: boolean;
+  }) => void | Promise<void>;
+  sendToolResponse?: (payload: {
+    functionResponses: LiveFunctionResponse[];
+  }) => void | Promise<void>;
   sendRealtimeInput?: (payload: RealtimeInputPayload) => void;
+};
+
+type LiveConnection = {
+  readyState?: number;
+  send?: (payload: unknown) => void;
+  sendMessage?: (payload: unknown) => void;
+};
+
+type LiveSessionWithConnection = LiveSession & {
+  conn?: LiveConnection;
+  readyState?: number;
 };
 
 type GoogleGenAIConstructor = new (config: { apiKey: string }) => {
@@ -132,7 +240,7 @@ type GoogleGenAIConstructor = new (config: { apiKey: string }) => {
         onopen?: () => void;
         onmessage?: (message: LiveMessage) => void | Promise<void>;
         onerror?: (error: Error) => void;
-        onclose?: () => void;
+        onclose?: (event?: { code?: number; reason?: string }) => void;
       };
     }) => Promise<LiveSession>;
   };
@@ -162,6 +270,190 @@ function displayValue(value: unknown, fallback = "-") {
   return text || fallback;
 }
 
+function normalizeBatchLookup(value: unknown) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gi, "");
+}
+
+function getBatchSummaryGroups(payload: unknown): BatchSummaryGroup[] {
+  const data = payload as {
+    data?: {
+      data?: { summarry?: unknown; summary?: unknown };
+      summarry?: unknown;
+      summary?: unknown;
+    };
+    summarry?: unknown;
+    summary?: unknown;
+  };
+  const rawGroups =
+    data.data?.data?.summarry ??
+    data.data?.data?.summary ??
+    data.data?.summarry ??
+    data.data?.summary ??
+    data.summarry ??
+    data.summary;
+
+  if (!Array.isArray(rawGroups)) return [];
+
+  return rawGroups.map((group) => {
+    const record = group as Record<string, unknown>;
+    const rawBatches = Array.isArray(record.batches) ? record.batches : [];
+
+    return {
+      nob_id: textValue(record.nob_id),
+      nature_of_business: textValue(record.nature_of_business),
+      line_of_business: textValue(record.line_of_business, "Other"),
+      lob_id: textValue(record.lob_id),
+      batches: rawBatches.map((batch) => {
+        const batchRecord = batch as Record<string, unknown>;
+        return {
+          batch_id: intValue(batchRecord.batch_id),
+          batch_no: textValue(batchRecord.batch_no),
+          start_date: textValue(batchRecord.start_date),
+          opening_stocks: intValue(batchRecord.opening_stocks),
+          remaining_stocks: intValue(batchRecord.remaining_stocks),
+          last_entry_date: textValue(batchRecord.last_entry_date),
+          remark: textValue(batchRecord.remark),
+          status: textValue(batchRecord.status),
+        };
+      }).filter((batch) => batch.batch_id || batch.batch_no),
+    };
+  }).filter((group) => group.batches.length > 0);
+}
+
+function findBatchSummary(
+  groups: BatchSummaryGroup[],
+  value: unknown,
+): BatchSummary | null {
+  const lookup = normalizeBatchLookup(value);
+  if (!lookup) return null;
+
+  for (const group of groups) {
+    const found = group.batches.find((batch) => {
+      const id = normalizeBatchLookup(batch.batch_id);
+      const batchNo = normalizeBatchLookup(batch.batch_no);
+      return (
+        id === lookup ||
+        batchNo === lookup ||
+        batchNo.startsWith(lookup) ||
+        lookup.startsWith(batchNo)
+      );
+    });
+
+    if (found) return found;
+  }
+
+  return null;
+}
+
+function getDataEntryDetails(result: unknown): NavData | null {
+  const payload = result as { data?: unknown };
+  const data = payload.data as NavData | undefined;
+
+  if (data?.data?.header || data?.data?.line) return data;
+  return null;
+}
+
+function normalizeActionLookup(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findInventoryItem(query: string) {
+  const lookup = normalizeActionLookup(query);
+  if (!lookup) return null;
+
+  return (
+    INVENTORY_ITEMS.find((item) => {
+      const itemName = normalizeActionLookup(item.itemName);
+      const sku = normalizeActionLookup(item.sku);
+      return (
+        itemName === lookup ||
+        sku === lookup ||
+        itemName.includes(lookup) ||
+        lookup.includes(itemName) ||
+        sku.includes(lookup)
+      );
+    }) ?? null
+  );
+}
+
+function formatStockItem(item: (typeof INVENTORY_ITEMS)[number]) {
+  const status = item.quantity <= item.reorderPoint ? "low" : "healthy";
+  return `${item.itemName} (${item.sku}) has ${item.quantity} ${item.unit}; reorder point ${item.reorderPoint}. Status: ${status}.`;
+}
+
+function buildStockLevelsResponse(itemName: string): ToolCallResponse {
+  const requestedItem = itemName.trim();
+  if (requestedItem) {
+    const item = findInventoryItem(requestedItem);
+    if (!item) {
+      return {
+        success: false,
+        error: `I could not find stock for ${requestedItem}. Current priority: ${formatStockItem(INVENTORY_ITEMS[0])}`,
+      };
+    }
+
+    return {
+      success: true,
+      message: formatStockItem(item),
+    };
+  }
+
+  const lowStock = INVENTORY_ITEMS.filter(
+    (item) => item.quantity <= item.reorderPoint,
+  );
+  const summary = INVENTORY_ITEMS.map(formatStockItem).join(" ");
+  return {
+    success: true,
+    message: lowStock.length
+      ? `Stock summary: ${summary} Replenishment needed for ${lowStock.map((item) => item.itemName).join(", ")}.`
+      : `Stock summary: ${summary} No items are below reorder point.`,
+  };
+}
+
+function buildPendingApprovalsResponse(): ToolCallResponse {
+  const priorityQueue = PENDING_APPROVALS.map(
+    (approval) =>
+      `${approval.id} for ${approval.vendor}, ${approval.amount}, pending ${approval.age}, owner: ${approval.owner}`,
+  ).join("; ");
+
+  return {
+    success: true,
+    message: `There are 7 pending approvals. Priority queue: ${priorityQueue}.`,
+  };
+}
+
+function buildVendorContactResponse(
+  vendorName: string,
+  message: string,
+  channel: string,
+): ToolCallResponse {
+  const vendor = vendorName.trim();
+  if (!vendor) {
+    return {
+      success: false,
+      error:
+        "Which vendor should I contact? Please provide the vendor name and optional message.",
+    };
+  }
+
+  const preferredChannel = ["email", "phone", "whatsapp"].includes(channel)
+    ? channel
+    : "email";
+  const contactMessage =
+    message.trim() || "Please share the latest status update.";
+
+  return {
+    success: true,
+    message: `Vendor contact prepared for ${vendor} via ${preferredChannel}: ${contactMessage}`,
+  };
+}
+
 function getLineSelectionText(line: NavLine) {
   return displayValue(line.iteM_NAME || line.parameteR_NAME);
 }
@@ -188,6 +480,44 @@ function formatMessageText(text: string) {
     .replace(/^\s*[-*]\s+/gm, "• ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function getLiveConnection(session: LiveSessionWithConnection): LiveConnection {
+  return session.conn || session;
+}
+
+function getLiveSendTarget(session: LiveSessionWithConnection) {
+  const conn = getLiveConnection(session);
+  const send = session.send || session.sendMessage || conn.send || conn.sendMessage;
+  return {
+    conn,
+    target: session.send || session.sendMessage ? session : conn,
+    send,
+  };
+}
+
+function isLiveConnectionClosed(conn: LiveConnection) {
+  return conn.readyState === 2 || conn.readyState === 3;
+}
+
+function buildLiveToolResponse(
+  call: ToolCallRequest,
+  result: ToolCallResponse,
+): LiveFunctionResponse {
+  const response: Record<string, unknown> = {
+    success: result.success !== false,
+  };
+
+  if (result.message) response.message = result.message;
+  if (result.error) response.error = result.error;
+  if (result.po_number) response.po_number = result.po_number;
+  if (result.data !== undefined) response.data = result.data;
+
+  return {
+    ...(call.id ? { id: call.id } : {}),
+    name: call.name,
+    response,
+  };
 }
 
 export default function VoiceBot() {
@@ -238,6 +568,9 @@ export default function VoiceBot() {
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  const [batchGroups, setBatchGroups] = useState<BatchSummaryGroup[]>([]);
+  const [isBatchesLoading, setIsBatchesLoading] = useState(false);
+  const [batchesError, setBatchesError] = useState<string | null>(null);
 
   // --- Mobile Initialization ---
   useEffect(() => {
@@ -254,49 +587,6 @@ export default function VoiceBot() {
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
-
-
-
-  const fetchData = async () => {
-    try {
-      const username = "xYvN7EOnhzdnTinyuq8amuhzRaBxNeOeeJyrp3/L0+Y=";
-      const password = "f4eqUIMzUI4UyBwnFJOPhji8D2umvEC2GzJFDOmRzB8=";
-      const token = "WnAxOHdiU1Rvb1JPUVJMR3ZyS20wUVBsNklmeHo2UHRPZzFUWWFqMjV0Yz06UXRvbWEgRmFybToxNzc3MzEyMDM4";
-
-      console.log("usernameusernameusernameusername", username, password);
-
-
-      function getBasicAuthHeader(username: string, password: string) {
-        return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
-      }
-
-      const response = await axios({
-        url: "https://agriapitest.navfarm.com/api/get_dataentry_details",
-        method: "GET",
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-          Authorization: getBasicAuthHeader(username, password),
-          authToken: token,
-        },
-        params: {
-          Company_Id: 275,
-          batch_id: 124,
-        }
-      })
-
-      console.log("NavFarm API Response:", response.data.data.header[0]);
-
-      return response.data.data.header[0];
-    } catch (error) {
-      console.log("error fetch details", error);
-
-    }
-  }
-
-  useEffect(() => {
-    fetchData()
-  }, [])
 
   // --- Show toast helper ---
   const showToast = (msg: string) => {
@@ -395,6 +685,74 @@ export default function VoiceBot() {
         outputAudioCtxRef.current.close().catch(() => undefined);
       }
     };
+  }, []);
+
+  const loadBatchSummary = useCallback(async () => {
+    setIsBatchesLoading(true);
+    setBatchesError(null);
+
+    try {
+      const params = new URLSearchParams(DEFAULT_BATCH_SUMMARY_REQUEST);
+      const res = await fetch(`/api/navfarm/get-dataentry-summary?${params.toString()}`, {
+        method: "GET",
+      });
+      const result = await res.json();
+      const response = result as {
+        success?: boolean;
+        error?: string;
+        message?: string;
+      };
+
+      if (!res.ok || response.success === false) {
+        throw new Error(
+          response.error ||
+          response.message ||
+          "NavFarm batch summary fetch failed.",
+        );
+      }
+
+      const groups = getBatchSummaryGroups(result);
+      setBatchGroups(groups);
+      return groups;
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to fetch batches.";
+      setBatchesError(message);
+      return [];
+    } finally {
+      setIsBatchesLoading(false);
+    }
+  }, []);
+
+  const fetchDataEntryDetails = useCallback(async (batchId: number | string) => {
+    const params = new URLSearchParams({
+      Company_Id: DEFAULT_BATCH_SUMMARY_REQUEST.Company_Id,
+      batch_id: String(batchId),
+    });
+    const res = await fetch(`/api/navfarm/get-dataentry-details?${params.toString()}`, {
+      method: "GET",
+    });
+    const result = await res.json();
+    const response = result as {
+      success?: boolean;
+      error?: string;
+      message?: string;
+    };
+
+    if (!res.ok || response.success === false) {
+      throw new Error(
+        response.error ||
+        response.message ||
+        "NavFarm data entry details fetch failed.",
+      );
+    }
+
+    const details = getDataEntryDetails(result);
+    if (!details) {
+      throw new Error("NavFarm did not return data entry details for this batch.");
+    }
+
+    return details;
   }, []);
 
   // --- Audio Utilities ---
@@ -500,60 +858,40 @@ export default function VoiceBot() {
   const handleAction = async (
     call: ToolCallRequest,
   ): Promise<ToolCallResponse> => {
-    // Update PO field via centralized store (no UI log)
-    if (call.name === "update_po_field") {
-      const field = call.args.field || call.args.field_name;
-      const value = call.args.value;
-      if (
-        !field ||
-        !value ||
-        !PO_FIELDS.includes(field as (typeof PO_FIELDS)[number])
-      ) {
-        return { success: false, error: "Invalid field update request." };
-      }
-
-      const normalizedValue = normalizeFieldValue(field, value);
-      if (!normalizedValue) {
-        return {
-          success: false,
-          error: `Could not verify ${field}. Ask the user to repeat it clearly.`,
-        };
-      }
-
-      updatePOField(field as keyof typeof poRef.current, normalizedValue);
-      return { success: true, message: `${field} updated.` };
+    if (call.name === "start_data_entry") {
+      startDataEntry(INITIAL_NAV_DATA);
+      void loadBatchSummary();
+      return { 
+        success: true, 
+        message: "Data entry flow has started. I have displayed the list of available batches. Please ask the user to select one of the batches to proceed." 
+      };
     }
-    if (call.name === "create_po") {
-      const missingFields = getMissingPOFields(poRef.current);
-      if (missingFields.length > 0) {
-        return {
-          success: false,
-          error: `Cannot create PO yet. Missing fields: ${missingFields.join(", ")}.`,
-        };
-      }
 
-      try {
-        const res = await fetch("/api/po/create", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(poRef.current),
-        });
-        const result = await res.json();
-        if (result.success) {
-          confirmPO();
-          return {
-            success: true,
-            message: result.message,
-            po_number: result.po_number,
-          };
-        }
-        return {
-          success: false,
-          error: result.error || "ERP Integration failed",
-        };
-      } catch {
-        return { success: false, error: "ERP Integration failed" };
-      }
+    if (call.name === "check_stock_levels") {
+      const itemName = String(
+        call.args.item_name ?? call.args.item ?? call.args.sku ?? "",
+      );
+      const response = buildStockLevelsResponse(itemName);
+      if (response.success) showToast("Stock levels checked");
+      return response;
+    }
+
+    if (call.name === "review_pending_approvals") {
+      const response = buildPendingApprovalsResponse();
+      showToast("Pending approvals reviewed");
+      return response;
+    }
+
+    if (call.name === "contact_vendor") {
+      const response = buildVendorContactResponse(
+        String(
+          call.args.vendor_name ?? call.args.vendor ?? call.args.supplier ?? "",
+        ),
+        String(call.args.message ?? ""),
+        String(call.args.channel ?? "").toLowerCase(),
+      );
+      if (response.success) showToast("Vendor contact prepared");
+      return response;
     }
 
     // --- NavData Tool Handlers ---
@@ -562,8 +900,35 @@ export default function VoiceBot() {
       if (!batchNo) {
         return { success: false, error: "Batch number is required." };
       }
-      updateNavBatch(batchNo);
-      return { success: true, message: `Batch number set to ${batchNo}.` };
+
+      const groups = batchGroups.length > 0 ? batchGroups : await loadBatchSummary();
+      const selectedBatch = findBatchSummary(groups, batchNo);
+
+      if (!selectedBatch) {
+        return {
+          success: false,
+          error: `Batch ${batchNo} was not found in the NavFarm summary.`,
+        };
+      }
+
+      try {
+        const details = await fetchDataEntryDetails(selectedBatch.batch_id);
+        const detailBatchNo = textValue(
+          details.data?.header?.[0]?.batcH_NO,
+          selectedBatch.batch_no,
+        );
+        startDataEntry(details);
+        updateNavBatch(detailBatchNo);
+        showToast(`Batch ${detailBatchNo} selected.`);
+        return {
+          success: true,
+          message: `Batch ${detailBatchNo} selected. Now, please ask the user to choose a line item from the list I have displayed.`,
+        };
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to fetch batch details.";
+        return { success: false, error: message };
+      }
     }
 
     if (call.name === "check_item_exists") {
@@ -574,8 +939,8 @@ export default function VoiceBot() {
           line.iteM_NAME || line.parameteR_NAME || "",
         ).trim();
         return {
-          success: true,
-          message: `Item ${resolvedItemName} exists. Ask for total units.`,
+          success: true, 
+          message: `Item ${resolvedItemName} has been found and selected. I have updated the view. Please ask the user to provide the 'Total Units' (Quantity) for this item.` 
         };
       }
       return {
@@ -613,8 +978,8 @@ export default function VoiceBot() {
       updateNavItemQuantity(resolvedItemName, quantity);
       showToast(`${resolvedItemName} quantity updated to ${quantity}`);
       return {
-        success: true,
-        message: `Updated ${resolvedItemName} actual value to ${quantity}.`,
+        success: true, 
+        message: `Quantity for ${resolvedItemName} has been updated to ${quantity}. Now, ask the user if they want to post this data entry (Yes/No).` 
       };
     }
 
@@ -639,6 +1004,25 @@ export default function VoiceBot() {
       };
     }
 
+    if (call.name === "get_current_data_entry_state") {
+      const activeFlow = poRef.current.activeFlow;
+      const navData = poRef.current.navData;
+      const batchNo = navData?.data?.header?.[0]?.batcH_NO || "None";
+      const linesWithQty = navData?.data?.line.filter((line) => Number(line.actuaL_VALUE) > 0) || [];
+      const currentItem = linesWithQty.length > 0 ? linesWithQty[linesWithQty.length - 1].iteM_NAME : "None";
+
+      return {
+        success: true,
+        data: {
+          active_flow: activeFlow,
+          current_batch: batchNo,
+          last_updated_item: currentItem,
+          items_with_quantity: linesWithQty.map((line) => ({ name: line.iteM_NAME, qty: line.actuaL_VALUE }))
+        },
+        message: `The current active batch is ${batchNo}. ${currentItem !== "None" ? `The last item updated was ${currentItem}.` : "No items have been updated yet."}`
+      };
+    }
+
     if (call.name === "post_data_entry") {
       const navData = poRef.current.navData;
       if (!navData || !navData.data) {
@@ -647,8 +1031,7 @@ export default function VoiceBot() {
 
 
 
-      // const h = navData.data.header[0] || {};
-      const h = await fetchData() || {};
+      const h = navData.data.header[0] || {};
 
       const header = {
         DATAENTRY_ID: intValue(h.dataentrY_ID),
@@ -797,6 +1180,9 @@ export default function VoiceBot() {
     if (status === "initializing") {
       return;
     }
+    // Ensure any existing session is closed before starting a new one
+    disconnect(true);
+    
     const apiKey = process.env.NEXT_PUBLIC_API_KEY;
     if (!apiKey) {
       setError("API Configuration Error. Please check your .env file.");
@@ -879,51 +1265,12 @@ export default function VoiceBot() {
           onmessage: async (msg: LiveMessage) => {
             console.log("🎙️ [Voice] Message received:", msg);
 
-            // 1. Tool Call
-            if (msg.toolCall) {
-              console.log(
-                "🛠 [Voice] Executing tool calls...",
-                msg.toolCall.functionCalls,
-              );
-              const toolResponses = await Promise.all(
-                msg.toolCall.functionCalls.map(async (call) => {
-                  const response = await handleAction(call);
-                  return {
-                    response: { output: response },
-                    id: call.id,
-                  };
-                }),
-              );
-              console.log("✅ [Voice] Tool responses:", toolResponses);
-              sessionRef.current?.send?.({
-                toolResponse: { functionResponses: toolResponses },
-              });
-            }
-
             // 1. User transcription — APPEND each chunk to one streaming message
             if (msg.serverContent?.inputTranscription) {
               const text = msg.serverContent.inputTranscription.text || "";
               if (text) {
                 stopAllAudio();
-                // appendToStreamingMessage reads prev state via functional update
-                // so it never creates a new bubble if one is already streaming
                 appendToStreamingMessage("user", text);
-
-                // Voice intent detection
-                if (
-                  /data entry|batch|nav data|apply data/i.test(text) &&
-                  poRef.current.activeFlow !== "DATA_ENTRY"
-                ) {
-                  startDataEntry(INITIAL_NAV_DATA);
-                }
-                if (
-                  /purchase order|create po|new po|order something/i.test(
-                    text,
-                  ) &&
-                  poRef.current.activeFlow !== "PO"
-                ) {
-                  startPO();
-                }
               }
             }
 
@@ -932,12 +1279,16 @@ export default function VoiceBot() {
               const text = msg.serverContent.outputTranscription.text || "";
               // Strip any internal tool call text that leaks through
               const isToolCallLeak =
-                /TOOL\s*CALL|update_po_field|create_po|functionCall/i.test(
+                /TOOL\s*CALL|update_po_field|create_po|start_data_entry|set_batch_number|check_item_exists|update_item_quantity|remove_item_entry|post_data_entry|check_stock_levels|review_pending_approvals|contact_vendor|functionCall/i.test(
                   text,
                 );
               if (text && !isToolCallLeak) {
-                appendToStreamingMessage("bot", text);
-                setStatus("speaking");
+                // Remove internal thinking markers if model outputs them
+                const cleanText = text.replace(/^(?:thought|thinking|ok|sure|alright)[,.\s]*/i, "");
+                if (cleanText) {
+                  appendToStreamingMessage("bot", cleanText);
+                  setStatus("speaking");
+                }
               }
             }
 
@@ -945,21 +1296,41 @@ export default function VoiceBot() {
             if (msg.toolCall) {
               setStatus("thinking");
               const functionCalls = msg.toolCall.functionCalls;
-              const responses = await Promise.all(
-                functionCalls.map(handleAction),
+              console.log("🛠 [Voice] Executing tool calls...", functionCalls);
+              const functionResponses = await Promise.all(
+                functionCalls.map(async (call) => {
+                  const response = await handleAction(call);
+                  return buildLiveToolResponse(call, response);
+                }),
               );
+              console.log("✅ [Voice] Tool responses:", functionResponses);
               if (sessionRef.current) {
-                const sendMethod =
-                  sessionRef.current.send || sessionRef.current.sendMessage;
-                if (typeof sendMethod === "function") {
-                  sendMethod.call(sessionRef.current, {
-                    toolResponse: {
-                      functionResponses: responses.map((resp, i) => ({
-                        response: resp,
-                        id: functionCalls[i].id,
-                      })),
-                    },
-                  });
+                const session = sessionRef.current as LiveSessionWithConnection;
+                const { conn, send, target } = getLiveSendTarget(session);
+                
+                console.log("🎙️ WS STATE:", conn.readyState);
+                if (isLiveConnectionClosed(conn)) {
+                   console.warn("⚠️ [Voice] Connection is closing/closed. Skipping send.");
+                   return;
+                }
+
+                if (typeof session.sendToolResponse === "function") {
+                  try {
+                    console.log("🎙️ [Voice] Sending SDK tool response:", functionResponses);
+                    await session.sendToolResponse({ functionResponses });
+                    if (isConnectedRef.current) setStatus("listening");
+                  } catch (err) {
+                    console.error("❌ [Voice] Tool response error:", err);
+                  }
+                } else if (typeof send === "function") {
+                  const payload = { toolResponse: { functionResponses } };
+                  try {
+                    console.log("🎙️ [Voice] Sending fallback tool response:", payload);
+                    send.call(target, payload);
+                    if (isConnectedRef.current) setStatus("listening");
+                  } catch (err) {
+                    console.error("❌ [Voice] Fallback tool response error:", err);
+                  }
                 }
               }
             }
@@ -1000,7 +1371,13 @@ export default function VoiceBot() {
             setError(`Connection lost: ${e.message}`);
             disconnect(false);
           },
-          onclose: () => disconnect(false),
+          onclose: (event?: { code?: number; reason?: string }) => {
+            console.warn("⚠️ [Voice] Session closed:", {
+              code: event?.code,
+              reason: event?.reason,
+            });
+            disconnect(false);
+          },
         },
       });
       sessionRef.current = await sessionPromise;
@@ -1013,13 +1390,61 @@ export default function VoiceBot() {
     }
   };
 
-  const handleSendMessage = async () => {
+  /**
+   * Helper to send voice intents properly without breaking the audio session.
+   * Treats UI interaction as conversational voice input.
+   */
+  const sendVoiceIntent = useCallback((text: string) => {
+    if (!sessionRef.current || !isConnected) return;
+    
+    try {
+      const session = sessionRef.current as LiveSessionWithConnection;
+      const { conn, send, target } = getLiveSendTarget(session);
+
+      if (isLiveConnectionClosed(conn)) {
+        console.warn("⚠️ [Voice] WS is closing/closed (state:", conn.readyState, "). Reconnecting...");
+        disconnect(true);
+        setTimeout(() => connect(), 500);
+        return;
+      }
+
+      const turns = [{
+        role: "user" as const,
+        parts: [{ text }]
+      }];
+
+      if (typeof session.sendClientContent === "function") {
+        console.log("🎙️ [Voice] Sending voice intent:", text);
+        void Promise.resolve(
+          session.sendClientContent({
+            turns,
+            turnComplete: true
+          }),
+        ).catch((err) => {
+          console.error("❌ [Voice] SDK client content error:", err);
+        });
+      } else if (typeof send === "function") {
+        console.log("🎙️ [Voice] Sending fallback voice intent:", text);
+        send.call(target, {
+          clientContent: {
+            turns,
+            turnComplete: true
+          }
+        });
+      }
+    } catch (err) {
+      console.error("❌ [Voice] Failed to send voice intent:", err);
+    }
+  }, [isConnected]);
+
+  const handleSendMessage = async (messageOverride?: string) => {
     if (viewingSavedChat) return;
-    if (!inputText.trim() || isTextSending) return;
+    const draftMessage = messageOverride ?? inputText;
+    if (!draftMessage.trim() || isTextSending) return;
 
     stopAllAudio();
 
-    const messageToSend = inputText.trim();
+    const messageToSend = draftMessage.trim();
     setInputText("");
 
     // Detect PO intent and start flow
@@ -1046,7 +1471,7 @@ export default function VoiceBot() {
         deliveryDate: "",
         sessionId: Date.now().toString(),
       };
-    } else if (isDataEntryIntent && poRef.current.activeFlow !== "DATA_ENTRY") {
+    } else if (isDataEntryIntent && !poRef.current.isActive) {
       const navData = JSON.parse(JSON.stringify(INITIAL_NAV_DATA));
       if (navData.data?.header?.[0]) {
         navData.data.header[0].batcH_NO = "";
@@ -1059,39 +1484,20 @@ export default function VoiceBot() {
         navData,
         sessionId: Date.now().toString(),
       };
+      void loadBatchSummary();
+      
+      // If voice is active, we should also trigger the tool call internally
+      if (isConnected && sessionRef.current) {
+        handleAction({ name: "start_data_entry", args: {} });
+      }
     }
 
     // Add user message to store (persisted)
     addMessage({ role: "user", text: messageToSend });
     setStatus("thinking");
 
-    // Case 1: Active Voice Session — send through live session
     if (sessionRef.current && isConnected) {
-      try {
-        // Support different SDK versions/method names
-        const sendFn =
-          sessionRef.current.send || sessionRef.current.sendMessage;
-
-        if (typeof sendFn === "function") {
-          console.log("🎙️ [Voice] Sending text to session:", messageToSend);
-          sendFn.call(sessionRef.current, {
-            clientContent: {
-              turns: [{ role: "user", parts: [{ text: messageToSend }] }],
-              turnComplete: true,
-            },
-          });
-        } else {
-          console.error(
-            "❌ [Voice] Session object structure:",
-            Object.keys(sessionRef.current),
-          );
-          throw new Error("Session send method not found");
-        }
-      } catch (err) {
-        console.error("❌ [Voice] Failed to send text to live session:", err);
-        setError("Failed to send message over the live session.");
-        setStatus("error");
-      }
+      sendVoiceIntent(messageToSend);
       return;
     }
 
@@ -1199,9 +1605,9 @@ export default function VoiceBot() {
   ];
 
   const getActions = () => [
-    "Create Purchase Order",
+    "Start Data Entry",
     "Check Stock Levels",
-    "Review Pending Approvals",
+    "Review Approvals",
     "Contact Vendor",
   ];
 
@@ -1378,6 +1784,8 @@ export default function VoiceBot() {
 
           {/* Right: Actions + Settings */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+            <GoogleTranslate />
+
             {/* Save / Clear Buttons */}
             {!viewingSavedChat && activeMessages.length > 0 && (
               <>
@@ -1523,31 +1931,6 @@ export default function VoiceBot() {
               )}
             </AnimatePresence>
 
-            {/* ── PO PROGRESS INDICATOR ── */}
-            {/* {!viewingSavedChat && po.isActive && completedCount < totalFields && (
-              <div className="mx-4 mt-3 p-3 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-zinc-600 dark:text-zinc-400">Purchase Order Progress</span>
-                  <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">{completedCount}/{totalFields} fields</span>
-                </div>
-                <div className="w-full h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 rounded-full"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${(completedCount / totalFields) * 100}%` }}
-                    transition={{ duration: 0.5, ease: 'easeOut' }}
-                  />
-                </div>
-                <div className="flex gap-2 mt-2 flex-wrap">
-                  {(['vendor', 'item', 'quantity', 'price', 'deliveryDate'] as const).map(field => (
-                    <span key={field} className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${po[field] ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600'
-                      }`}>
-                      {po[field] ? `✓ ${field}` : field}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )} */}
 
             {/* Voice Wave Animation */}
             {!viewingSavedChat && isConnected && (
@@ -1592,9 +1975,7 @@ export default function VoiceBot() {
                     {getActions().map((action) => (
                       <button
                         key={action}
-                        onClick={() => {
-                          setInputText(action);
-                        }}
+                        onClick={() => void handleSendMessage(action)}
                         className="text-left px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-sm text-zinc-600 dark:text-zinc-400 hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all"
                       >
                         {action}
@@ -1655,73 +2036,114 @@ export default function VoiceBot() {
                           <span className="inline-block w-0.5 h-4 bg-emerald-400 animate-pulse ml-1 align-middle" />
                         )}
 
+                        {/* Inline Batch List Buttons */}
+                        {msg.role === "bot" &&
+                          /(?:select a batch|choose a batch|available batches|बैच चुनें|बैच का चयन|उपलब्ध बैच|बैच चुनिए)/i.test(msg.text) &&
+                          messages[messages.length - 1]?.id === msg.id && (
+                            <div className="mt-4 grid grid-cols-1 gap-2 w-full">
+                              <div className="flex items-center justify-between gap-3 mb-1">
+                                <p className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">
+                                  Available Batches
+                                </p>
+                                {batchesError && (
+                                  <button
+                                    onClick={() => void loadBatchSummary()}
+                                    className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline"
+                                  >
+                                    Retry
+                                  </button>
+                                )}
+                              </div>
+
+                              {isBatchesLoading && (
+                                <div className="flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                                  <Loader2 className="w-4 h-4 animate-spin text-emerald-500" />
+                                  Loading NavFarm batches...
+                                </div>
+                              )}
+
+                              {!isBatchesLoading && batchesError && (
+                                <div className="flex items-start gap-2 rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 px-4 py-3 text-xs text-rose-700 dark:text-rose-300">
+                                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                  <span>{batchesError}</span>
+                                </div>
+                              )}
+
+                              {!isBatchesLoading && !batchesError && batchGroups.length === 0 && (
+                                <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400">
+                                  No batches found for the selected NavFarm filters.
+                                </div>
+                              )}
+
+                              {!isBatchesLoading && !batchesError && batchGroups.map((group) => (
+                                <div key={`${group.lob_id}-${group.line_of_business}`} className="space-y-2">
+                                  <div className="flex items-center justify-between gap-3 px-1">
+                                    <p className="text-[11px] font-black uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
+                                      {group.line_of_business}
+                                    </p>
+                                    <p className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500">
+                                      {group.batches.length} batches
+                                    </p>
+                                  </div>
+                                  {group.batches.map((batch) => (
+                                    <button
+                                      key={`${group.lob_id}-${batch.batch_id}`}
+                                      onClick={() => void handleSendMessage("Select batch " + batch.batch_no)}
+                                      className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-emerald-500 hover:bg-emerald-50/30 transition-all text-left flex justify-between items-center gap-3 group"
+                                    >
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-bold text-zinc-800 dark:text-zinc-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 break-words">
+                                          {batch.batch_no}
+                                        </p>
+                                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                          Remaining {batch.remaining_stocks} / Opening {batch.opening_stocks}
+                                        </p>
+                                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                                          Start {displayValue(batch.start_date)} • Last entry {displayValue(batch.last_entry_date)}
+                                        </p>
+                                      </div>
+                                      <div className="flex items-center gap-2 flex-shrink-0">
+                                        <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
+                                          {displayValue(batch.status)}
+                                        </span>
+                                        <ChevronRight size={16} className="text-zinc-300 dark:text-zinc-700 group-hover:text-emerald-500" />
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
                         {/* Inline Data Entry Item Buttons */}
                         {msg.role === "bot" &&
                           po.activeFlow === "DATA_ENTRY" &&
-                          /(?:item name|select an item|which item|choose an item|item to update)/i.test(
+                          po.navData?.data?.header?.[0]?.batcH_NO &&
+                          /(?:item name|select a line|select an item|which item|choose an item|item to update|आइटम चुनें|लाइन चुनें|अपडेट करें|आइटम चुनिए)/i.test(
                             msg.text,
                           ) &&
-                          !msg.isStreaming &&
                           messages[messages.length - 1]?.id === msg.id && (
                             <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-2 w-full min-w-[240px]">
                               <p className="col-span-full text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-1">
-                                Select an Item:
+                                Select a Line Item:
                               </p>
                               {po.navData?.data?.line.map((line, idx) => (
                                 <button
                                   key={idx}
-                                  onClick={() => {
-                                    setInputText(getLineSelectionText(line));
-                                    setTimeout(
-                                      () =>
-                                        document
-                                          .getElementById("send-message-btn")
-                                          ?.click(),
-                                      100,
-                                    );
-                                  }}
+                                  onClick={() =>
+                                    void handleSendMessage(
+                                      "I select item " + getLineSelectionText(line),
+                                    )
+                                  }
                                   className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/50 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:border-emerald-300 dark:hover:border-emerald-700 transition-all text-left group shadow-sm"
                                 >
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
-                                    <div>
-                                      <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                        Parameter Type
-                                      </p>
-                                      <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
-                                        {displayValue(line.parameteR_TYPE)}
-                                      </p>
-                                    </div>
-                                    <div>
-                                      <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                        Parameter Name
-                                      </p>
-                                      <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
-                                        {displayValue(line.parameteR_NAME)}
-                                      </p>
-                                    </div>
-                                    <div>
-                                      <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                        Cost Per Unit
-                                      </p>
-                                      <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200">
-                                        {displayValue(line.uniT_COST)}
-                                      </p>
-                                    </div>
-                                    <div>
-                                      <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                        Item Name
-                                      </p>
-                                      <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200 break-words">
-                                        {displayValue(line.iteM_NAME)}
-                                      </p>
-                                    </div>
-                                    <div>
-                                      <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                        Stock
-                                      </p>
-                                      <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200">
-                                        {displayValue(line.stock)}
-                                      </p>
+                                  <div className="flex flex-col gap-1">
+                                    <p className="text-[12px] font-bold text-zinc-800 dark:text-zinc-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
+                                      {getLineSelectionText(line)}
+                                    </p>
+                                    <div className="flex justify-between items-center text-[10px]">
+                                      <span className="text-zinc-500 dark:text-zinc-400">Stock: {displayValue(line.stock)}</span>
+                                      <span className="text-emerald-600 dark:text-emerald-400 font-bold">{displayValue(line.uniT_COST)} {displayValue(line.dataentrY_UOM, "")}</span>
                                     </div>
                                   </div>
                                 </button>
@@ -1785,9 +2207,12 @@ export default function VoiceBot() {
                           : "Type a message..."
                     }
                     className="flex-1 bg-transparent border-none focus:ring-0 text-sm text-zinc-800 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 outline-none disabled:bg-transparent disabled:cursor-not-allowed"
-                    onKeyDown={(e) =>
-                      e.key === "Enter" && !e.shiftKey && handleSendMessage()
-                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void handleSendMessage();
+                      }
+                    }}
                   />
                   <button
                     disabled={viewingSavedChat !== null}
@@ -1812,7 +2237,7 @@ export default function VoiceBot() {
                 {/* Send Button */}
                 <button
                   id="send-message-btn"
-                  onClick={handleSendMessage}
+                  onClick={() => void handleSendMessage()}
                   disabled={
                     viewingSavedChat !== null ||
                     !inputText.trim() ||
@@ -1916,7 +2341,7 @@ export default function VoiceBot() {
                     {getActions().map((action) => (
                       <button
                         key={action}
-                        onClick={() => setInputText(action)}
+                        onClick={() => void handleSendMessage(action)}
                         className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:border-emerald-300 border border-transparent transition-all mb-1.5 text-left group"
                       >
                         <span className="text-[12px] font-medium text-zinc-600 dark:text-zinc-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
@@ -1940,15 +2365,9 @@ export default function VoiceBot() {
                         {po.navData.data.line.map((line, idx) => (
                           <button
                             key={idx}
-                            onClick={() => {
-                              setInputText(getLineSelectionText(line));
-                              // Auto-send if it's an item selection
-                              setTimeout(() => {
-                                const sendBtn =
-                                  document.getElementById("send-message-btn");
-                                sendBtn?.click();
-                              }, 100);
-                            }}
+                            onClick={() =>
+                              void handleSendMessage(getLineSelectionText(line))
+                            }
                             className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all group ${line.actuaL_VALUE > 0
                               ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800"
                               : "bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 hover:border-emerald-500"
@@ -2017,47 +2436,6 @@ export default function VoiceBot() {
                     </div>
                   )}
 
-                  {/* PO Status Card */}
-                  {po.activeFlow === "PO" &&
-                    Object.values(po).some(
-                      (v) =>
-                        v &&
-                        v !== "" &&
-                        v !== false &&
-                        v !== "idle" &&
-                        v !== "done",
-                    ) && (
-                      <div className="mt-2">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600 px-1 mb-2 flex items-center gap-1">
-                          <ClipboardList size={10} /> Active PO Draft
-                        </p>
-                        <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3">
-                          {(
-                            [
-                              "vendor",
-                              "item",
-                              "quantity",
-                              "price",
-                              "deliveryDate",
-                            ] as const
-                          ).map((key) =>
-                            po[key] ? (
-                              <div
-                                key={key}
-                                className="flex justify-between items-center py-1"
-                              >
-                                <span className="text-[11px] text-zinc-500 dark:text-zinc-400 capitalize">
-                                  {key}
-                                </span>
-                                <span className="text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
-                                  {String(po[key])}
-                                </span>
-                              </div>
-                            ) : null,
-                          )}
-                        </div>
-                      </div>
-                    )}
                 </div>
               </motion.aside>
             )}

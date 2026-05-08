@@ -59,18 +59,22 @@ type FunctionDeclarationsTool = {
   functionDeclarations?: FunctionDeclaration[];
 };
 
-const PO_FIELDS = ['vendor', 'item', 'quantity', 'price', 'deliveryDate'] as const;
 const DATA_ENTRY_TOOL_NAMES = new Set([
+  'start_data_entry',
   'set_batch_number',
   'check_item_exists',
   'update_item_quantity',
   'remove_item_entry',
   'post_data_entry',
 ]);
+const ERP_ACTION_TOOL_NAMES = new Set([
+  'check_stock_levels',
+  'review_pending_approvals',
+  'contact_vendor',
+]);
 const KNOWN_TOOL_NAMES = new Set([
-  'update_po_field',
-  'create_po',
   ...DATA_ENTRY_TOOL_NAMES,
+  ...ERP_ACTION_TOOL_NAMES,
 ]);
 
 function normalizeAssistantText(text: string): string {
@@ -165,8 +169,10 @@ function normalizeToolCalls(calls: ChatCompletionMessageToolCall[] | undefined, 
     const args = parseToolArguments(call.function.arguments);
     const name = call.function.name.trim();
     if (!KNOWN_TOOL_NAMES.has(name)) continue;
-    if (poData?.activeFlow === 'DATA_ENTRY' && !batchNo && name !== 'set_batch_number') continue;
-    if (poData?.activeFlow === 'DATA_ENTRY' && batchNo && name === 'set_batch_number') continue;
+    if (poData?.activeFlow === 'DATA_ENTRY' && DATA_ENTRY_TOOL_NAMES.has(name)) {
+      if (!batchNo && name !== 'set_batch_number') continue;
+      if (batchNo && name === 'set_batch_number') continue;
+    }
 
     if (name === 'set_batch_number') {
       args.batch_no = String(args.batch_no ?? args.batchNo ?? args.batch ?? '').trim();
@@ -183,6 +189,17 @@ function normalizeToolCalls(calls: ChatCompletionMessageToolCall[] | undefined, 
       const quantity = Number(args.quantity ?? args.actual_value ?? args.actualValue ?? args.value);
       if (!Number.isFinite(quantity)) continue;
       args.quantity = quantity;
+    }
+
+    if (name === 'check_stock_levels') {
+      args.item_name = String(args.item_name ?? args.item ?? args.sku ?? '').trim();
+    }
+
+    if (name === 'contact_vendor') {
+      args.vendor_name = String(args.vendor_name ?? args.vendor ?? args.supplier ?? '').trim();
+      args.message = String(args.message ?? args.note ?? args.reason ?? '').trim();
+      args.channel = String(args.channel ?? '').trim().toLowerCase();
+      if (!args.vendor_name) continue;
     }
 
     normalizedCalls.push({
@@ -224,8 +241,13 @@ function isPostIntent(message: string): boolean {
 }
 
 function extractBatchNumber(message: string): string | null {
-  const explicit = message.match(/\bbatch(?:\s*(?:number|no|#))?\s*(?:is|:|-)?\s*([a-z0-9][a-z0-9/_-]{1,30})\b/i);
-  if (explicit?.[1]) return explicit[1].trim();
+  const explicit = message.match(/\bbatch(?:\s*(?:number|no|#|id))?\s*(?:is|:|-)?\s*([a-z0-9][a-z0-9/_.\-\s]{0,120})/i);
+  if (explicit?.[1]) {
+    return explicit[1]
+      .replace(/\s*\(\d+\)\s*$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
 
   const compact = message.trim();
   if (/^[a-z0-9][a-z0-9/_-]{1,30}$/i.test(compact) && /\d/.test(compact)) {
@@ -253,7 +275,15 @@ function findLastSelectedLine(history: HistoryMessage[], lines: NavRecord[]): Na
 }
 
 function inferDataEntryToolCalls(message: string, poData: POData | undefined, history: HistoryMessage[]): NormalizedToolCall[] {
-  if (poData?.activeFlow !== 'DATA_ENTRY') return [];
+  const lookup = normalizeLookup(message);
+  
+  // Detect intent for data entry
+  if (poData?.activeFlow !== 'DATA_ENTRY') {
+    if (lookup.includes('data entry') || lookup.includes('batch entry') || lookup.includes('farm entry')) {
+      return [{ name: 'start_data_entry', args: {} }];
+    }
+    return [];
+  }
 
   const lines = getNavLines(poData);
   const batchNo = getBatchNo(poData);
@@ -294,6 +324,83 @@ function inferDataEntryToolCalls(message: string, poData: POData | undefined, hi
   return [];
 }
 
+function cleanupExtractedName(value: string): string {
+  return value
+    .replace(/\b(?:vendor|supplier|please|kindly)\b/gi, ' ')
+    .replace(/[.!?]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractStockItemName(message: string): string {
+  return message
+    .replace(/\b(?:check|show|get|review|current|stock|stocks|levels?|inventory|availability|available|for|of|item|sku|please|kindly|is|the)\b/gi, ' ')
+    .replace(/[.!?]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractVendorName(message: string): string {
+  const explicit = message.match(/\b(?:vendor|supplier)\s+(?:name\s+)?(?:is\s+)?([a-z][\w\s&.-]{1,40}?)(?:\s+(?:about|regarding|via|by|on|for|to|with|message|email|call|phone|whatsapp)|[.!?]|$)/i);
+  if (explicit?.[1]) return cleanupExtractedName(explicit[1]);
+
+  const direct = message.match(/\b(?:contact|call|email|message|whatsapp|reach out to)\s+([a-z][\w\s&.-]{1,40}?)(?:\s+(?:about|regarding|via|by|on|for|with|vendor|supplier)|[.!?]|$)/i);
+  if (direct?.[1]) return cleanupExtractedName(direct[1]);
+
+  return '';
+}
+
+function extractContactMessage(message: string): string {
+  const match = message.match(/\b(?:about|regarding|for)\s+(.+)$/i);
+  return match?.[1]?.replace(/[.!?]+$/g, '').trim() ?? '';
+}
+
+function extractContactChannel(message: string): string {
+  if (/\bwhatsapp\b/i.test(message)) return 'whatsapp';
+  if (/\b(phone|call)\b/i.test(message)) return 'phone';
+  if (/\bemail|mail\b/i.test(message)) return 'email';
+  return '';
+}
+
+function inferErpActionToolCalls(message: string): NormalizedToolCall[] {
+  const lookup = normalizeLookup(message);
+  if (!lookup) return [];
+
+  if ((lookup.includes('pending') && lookup.includes('approval')) || lookup === 'review approvals') {
+    return [{ name: 'review_pending_approvals', args: {} }];
+  }
+
+  if (/\b(stock|stocks|inventory|availability|available)\b/i.test(message)) {
+    return [{
+      name: 'check_stock_levels',
+      args: { item_name: extractStockItemName(message) },
+    }];
+  }
+
+  const hasContactIntent = /\b(contact|call|email|message|whatsapp|reach out)\b/i.test(message);
+  if (hasContactIntent) {
+    const vendorName = extractVendorName(message);
+    if (vendorName) {
+      return [{
+        name: 'contact_vendor',
+        args: {
+          vendor_name: vendorName,
+          message: extractContactMessage(message),
+          channel: extractContactChannel(message),
+        },
+      }];
+    }
+  }
+
+  return [];
+}
+
+function inferToolCalls(message: string, poData: POData | undefined, history: HistoryMessage[]): NormalizedToolCall[] {
+  const dataEntryCalls = inferDataEntryToolCalls(message, poData, history);
+  if (dataEntryCalls.length > 0) return dataEntryCalls;
+  return inferErpActionToolCalls(message);
+}
+
 function buildFlowContext(poData?: POData): string {
   if (poData?.activeFlow === 'DATA_ENTRY') {
     const batchNo = getBatchNo(poData);
@@ -317,29 +424,19 @@ function buildFlowContext(poData?: POData): string {
       lineList || 'No line items available.',
       '',
       'DATA ENTRY RULES:',
-      '1. If Batch Number is not set, greet the user and ask only for the Batch Number.',
-      '2. When the user provides a batch number, call set_batch_number.',
-      '3. After the batch number is set, ask: "Please select an item to update."',
-      '4. When the user selects a line item by name or number, call check_item_exists.',
-      '5. If the line item exists, ask only for Total Units.',
-      '6. When Total Units are provided, call update_item_quantity and update ACTUAL_VALUE.',
-      '7. After an item update, ask: "Do you want to add another item?"',
-      '8. If the user says yes, ask them to select an item to update.',
-      '9. If the user says no, ask: "Do you want to post the data entry?"',
-      '10. If the user confirms posting, call post_data_entry.',
+      '1. If the user wants to start data entry, call start_data_entry.',
+      '2. If Batch Number is not set, greet the user and show the list of available batches.',
+      '3. When the user selects a batch, call set_batch_number.',
+      '4. After the batch number is set, show the list of line items and ask the user to select one.',
+      '5. When the user selects a line item, call check_item_exists.',
+      '6. Once an item is selected, ask only for Total Units.',
+      '7. When quantity is provided, call update_item_quantity.',
+      '8. After updating quantity, ask: "Do you want to post the data entry?".',
+      '9. If the user confirms (Yes), call post_data_entry.',
     ].join('\n');
   }
 
-  const missingFields = PO_FIELDS.filter(field => !poData?.[field]);
-  const filledFields = PO_FIELDS
-    .filter(field => poData?.[field])
-    .map(field => `${field}: ${poData?.[field]}`);
-
-  return [
-    'CURRENT PO STATE:',
-    filledFields.length > 0 ? `Already collected: ${filledFields.join(', ')}` : 'No fields collected yet.',
-    `Missing fields (ask in order if PO is active): ${missingFields.join(', ') || 'none - all fields complete, ask for confirmation'}`,
-  ].join('\n');
+  return 'Flow: NONE. Greet the user and ask how you can help (e.g., Data Entry, Stock Check).';
 }
 
 function buildSystemPrompt(poData?: POData): string {
@@ -392,11 +489,17 @@ function buildDataEntryResponseText(
   toolCalls: NormalizedToolCall[],
   modelText: string,
 ): string {
-  if (poData?.activeFlow !== 'DATA_ENTRY') return modelText;
+  if (poData?.activeFlow !== 'DATA_ENTRY' && !toolCalls.some(c => c.name === 'start_data_entry')) return modelText;
+  if (toolCalls.length > 0 && toolCalls.every(call => !DATA_ENTRY_TOOL_NAMES.has(call.name))) {
+    return modelText;
+  }
 
   const batchNo = getBatchNo(poData);
   const lines = getNavLines(poData);
-  const lastBotText = getLastBotText(history);
+
+  if (toolCalls.some(call => call.name === 'start_data_entry')) {
+    return 'Sure, I can help with NavFarm data entry. Please select a batch from the list below.';
+  }
 
   const postCall = toolCalls.find(call => call.name === 'post_data_entry');
   if (postCall) {
@@ -407,14 +510,7 @@ function buildDataEntryResponseText(
   if (updateCall) {
     const line = resolveLineIdentifier(updateCall.args.item_name, lines);
     const label = getLineLabel(line) || String(updateCall.args.item_name || 'the selected item');
-    return `Updated ${label} actual value to ${updateCall.args.quantity}. Do you want to add another item?`;
-  }
-
-  const removeCall = [...toolCalls].reverse().find(call => call.name === 'remove_item_entry');
-  if (removeCall) {
-    const line = resolveLineIdentifier(removeCall.args.item_name, lines);
-    const label = getLineLabel(line) || String(removeCall.args.item_name || 'the selected item');
-    return `Cleared ${label}. Do you want to add another item?`;
+    return `Updated ${label} actual value to ${updateCall.args.quantity}. Do you want to post the data entry?`;
   }
 
   const checkCall = [...toolCalls].reverse().find(call => call.name === 'check_item_exists');
@@ -427,23 +523,11 @@ function buildDataEntryResponseText(
 
   const batchCall = [...toolCalls].reverse().find(call => call.name === 'set_batch_number');
   if (batchCall) {
-    return `Batch number ${batchCall.args.batch_no} is set. Please select an item to update from the list below.`;
+    return `Batch ${batchCall.args.batch_no} selected. Please select a line item to update from the list below.`;
   }
 
   if (!batchNo) {
-    return 'Hi, I can help with NavFarm data entry. Please provide the batch number.';
-  }
-
-  if (asksAddAnother(lastBotText) && isAffirmative(message)) {
-    return 'Please select an item to update from the list below.';
-  }
-
-  if (asksAddAnother(lastBotText) && isNegative(message)) {
-    return 'Do you want to post the data entry?';
-  }
-
-  if (asksPostBatch(lastBotText) && isNegative(message)) {
-    return 'Okay, I will not post it yet. Please select an item to update if you want to make changes.';
+    return 'Please select a batch from the list below to proceed with data entry.';
   }
 
   return modelText || 'Please select an item to update from the list below.';
@@ -485,10 +569,15 @@ export async function POST(req: Request) {
       && asksAddAnother(lastBotText)
       && (isAffirmative(message) || isNegative(message));
     const modelToolCalls = isAnsweringAddAnother ? [] : normalizeToolCalls(aiMessage?.tool_calls, poData);
-    const inferredToolCalls = modelToolCalls.length > 0 || isAnsweringAddAnother ? [] : inferDataEntryToolCalls(message, poData, recentHistory);
+    const inferredToolCalls = modelToolCalls.length > 0 || isAnsweringAddAnother ? [] : inferToolCalls(message, poData, recentHistory);
     const toolCalls = modelToolCalls.length > 0 ? modelToolCalls : inferredToolCalls;
+    const hasInferredErpAction = modelToolCalls.length === 0
+      && inferredToolCalls.some(call => ERP_ACTION_TOOL_NAMES.has(call.name));
 
     rawBotText = buildDataEntryResponseText(message, poData, recentHistory, toolCalls, rawBotText);
+    if (hasInferredErpAction) {
+      rawBotText = '';
+    }
 
     console.log('[Chat API] OpenAI response received:', {
       textLength: rawBotText.length,

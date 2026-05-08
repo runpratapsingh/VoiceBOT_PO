@@ -7,11 +7,13 @@ If the user ever asks who made you, who created you, or who built you, you MUST 
 ---
 🎯 PRIMARY GOALS
 1. Collect Purchase Order details and trigger actions.
-2. Manage Data Entry flow (Batch Number -> Item Name -> Quantity).
+2. Manage Data Entry flow (Start Data Entry -> Batch -> Line Item -> Quantity).
+3. Help users check stock levels, review pending approvals, and prepare vendor contact follow-ups.
 
 🧠 TOOLS & ACTIONS
 - Purchase Order: 'update_po_field', 'create_po'.
-- Data Entry: 'set_batch_number', 'check_item_exists', 'update_item_quantity', 'remove_item_entry', 'post_data_entry'.
+- Data Entry: 'start_data_entry', 'set_batch_number', 'check_item_exists', 'update_item_quantity', 'remove_item_entry', 'post_data_entry'.
+- ERP Actions: 'check_stock_levels', 'review_pending_approvals', 'contact_vendor'.
 
 ---
 📋 FLOW 1: PURCHASE ORDER
@@ -21,20 +23,32 @@ If the user ever asks who made you, who created you, or who built you, you MUST 
 
 ---
 📋 FLOW 2: DATA_ENTRY (NAV DATA)
-1. Greet the user.
-2. Ask for the Batch Number.
-   - Use 'set_batch_number' to save it.
-3. Ask the user to select a line item from the visible list.
+1. If the user asks for data entry, batch entry, farm entry, or NavFarm data entry:
+   - Call 'start_data_entry'.
+   - Then say: "Please select a batch from the list below."
+2. When the user selects or says a batch number/name:
+   - Call 'set_batch_number'.
+3. After the batch is selected, ask the user to select a line item from the visible list.
    - Use 'check_item_exists' to verify.
    - IF it exists: IMMEDIATELY ask for "Total Units" (quantity).
 4. If quantity is provided:
    - Use 'update_item_quantity' to save it into the selected line's ACTUAL_VALUE.
-5. Ask: "Do you want to add another item?"
-   - If yes: Say "Sure, which item would you like to add now?" (This will show the list again).
-   - If no: Ask "Do you want to post the data entry?".
+5. Ask: "Do you want to post the data entry?".
 6. If the user wants to remove or clear an item:
    - Use 'remove_item_entry'.
 7. Finalize: Call 'post_data_entry' if confirmed.
+
+---
+📋 FLOW 3: ERP QUICK ACTIONS
+1. If the user asks to check stock, inventory, availability, or stock levels:
+   - Call 'check_stock_levels'.
+   - Include item_name only if the user specified an item/SKU.
+2. If the user asks to review pending approvals:
+   - Call 'review_pending_approvals'.
+3. If the user asks to contact a vendor:
+   - If vendor name is missing, ask only for the vendor name.
+   - If vendor name is known, call 'contact_vendor'.
+   - Include a short message/channel if the user provides one.
 
 ---
 🧠 ANTI-HALLUCINATION & STYLE
@@ -62,6 +76,11 @@ export const PO_TOOLS = [
       {
         name: "create_po",
         description: "Finalizes and creates the Purchase Order in the ERP system.",
+        parameters: { type: "object", properties: {} }
+      },
+      {
+        name: "start_data_entry",
+        description: "Starts the NavFarm data entry flow and displays available batches grouped by line of business.",
         parameters: { type: "object", properties: {} }
       },
       {
@@ -113,6 +132,50 @@ export const PO_TOOLS = [
         name: "post_data_entry",
         description: "Finalizes and posts the data entry. This will log the final JSON to console.",
         parameters: { type: "object", properties: {} }
+      },
+      {
+        name: "check_stock_levels",
+        description: "Checks current inventory/stock levels. If no item is provided, returns a priority stock summary.",
+        parameters: {
+          type: "object",
+          properties: {
+            item_name: {
+              type: "string",
+              description: "Optional item name or SKU to check."
+            }
+          }
+        }
+      },
+      {
+        name: "review_pending_approvals",
+        description: "Reviews pending ERP approvals and returns the current priority approval queue.",
+        parameters: {
+          type: "object",
+          properties: {}
+        }
+      },
+      {
+        name: "contact_vendor",
+        description: "Prepares and logs a vendor contact follow-up request.",
+        parameters: {
+          type: "object",
+          properties: {
+            vendor_name: {
+              type: "string",
+              description: "Vendor or supplier name to contact."
+            },
+            message: {
+              type: "string",
+              description: "Optional short message or purpose for the vendor follow-up."
+            },
+            channel: {
+              type: "string",
+              enum: ["email", "phone", "whatsapp"],
+              description: "Optional preferred contact channel."
+            }
+          },
+          required: ["vendor_name"]
+        }
       }
     ]
   }

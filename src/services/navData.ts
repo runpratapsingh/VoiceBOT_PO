@@ -520,3 +520,85 @@ export const INITIAL_NAV_DATA = {
         "livestock_new": []
     }
 };
+export const DUMMY_BATCHES = [
+    {
+        "batcH_ID": 124,
+        "batcH_NO": "B00129",
+        "loB_NAME": "Fruits",
+        "locatioN_NAME": "Area 3 Farm",
+        "lines": [
+            {
+                "iteM_NAME": "Neem Pure Oil - I-00216",
+                "parameteR_NAME": "Organic Sprays ",
+                "stock": 7765,
+                "uniT_COST": 55,
+                "dataentrY_UOM": "MG/L"
+            },
+            {
+                "iteM_NAME": "Nitrogen - I-00207",
+                "parameteR_NAME": "Organic Fertilisers ",
+                "stock": 9964,
+                "uniT_COST": 23,
+                "dataentrY_UOM": "KG"
+            },
+            {
+                "iteM_NAME": "NPK fertilizers - I-00205",
+                "parameteR_NAME": "Organic Fertilisers ",
+                "stock": 967,
+                "uniT_COST": 34,
+                "dataentrY_UOM": "KG"
+            }
+        ]
+    },
+    {
+        "batcH_ID": 125,
+        "batcH_NO": "B00130",
+        "loB_NAME": "Fruits",
+        "locatioN_NAME": "Area 4 Farm",
+        "lines": [
+            {
+                "iteM_NAME": "Phosphorus - I-00208",
+                "parameteR_NAME": "Organic Fertilisers ",
+                "stock": 9856,
+                "uniT_COST": 23,
+                "dataentrY_UOM": "KG"
+            },
+            {
+                "iteM_NAME": "Potassium - I-00209",
+                "parameteR_NAME": "Organic Fertilisers ",
+                "stock": 946,
+                "uniT_COST": 234,
+                "dataentrY_UOM": "KG"
+            },
+            {
+                "iteM_NAME": "Barhi Dates - I-00203",
+                "parameteR_NAME": "Dates",
+                "stock": 167,
+                "uniT_COST": 720,
+                "dataentrY_UOM": "KG"
+            }
+        ]
+    },
+    {
+        "batcH_ID": 126,
+        "batcH_NO": "B00131",
+        "loB_NAME": "Vegetables",
+        "locatioN_NAME": "North Field",
+        "lines": [
+            {
+                "iteM_NAME": "Tomato Seeds - V-00101",
+                "parameteR_NAME": "Seeds",
+                "stock": 500,
+                "uniT_COST": 12,
+                "dataentrY_UOM": "PKT"
+            },
+            {
+                "iteM_NAME": "Organic Compost - F-00302",
+                "parameteR_NAME": "Fertilisers",
+                "stock": 1500,
+                "uniT_COST": 15,
+                "dataentrY_UOM": "KG"
+            }
+        ]
+    }
+];
