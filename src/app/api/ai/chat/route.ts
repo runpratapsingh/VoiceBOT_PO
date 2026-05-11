@@ -62,6 +62,7 @@ type FunctionDeclarationsTool = {
 const DATA_ENTRY_TOOL_NAMES = new Set([
   'start_data_entry',
   'set_batch_number',
+  'get_current_data_entry_state',
   'check_item_exists',
   'update_item_quantity',
   'remove_item_entry',
@@ -175,8 +176,16 @@ function normalizeToolCalls(calls: ChatCompletionMessageToolCall[] | undefined, 
     }
 
     if (name === 'set_batch_number') {
-      args.batch_no = String(args.batch_no ?? args.batchNo ?? args.batch ?? '').trim();
-      if (!args.batch_no) continue;
+      const batchNo = String(args.batch_no ?? args.batchNo ?? args.batch ?? '').trim();
+      args.batch_no = batchNo;
+      const rawBatchId = args.batch_id ?? args.batchId;
+      const batchId = Number(rawBatchId);
+      if (Number.isFinite(batchId) && batchId > 0) {
+        args.batch_id = batchId;
+      } else if (/^\d+$/.test(batchNo)) {
+        args.batch_id = Number(batchNo);
+      }
+      if (!args.batch_no && !args.batch_id) continue;
     }
 
     if (name === 'check_item_exists' || name === 'update_item_quantity' || name === 'remove_item_entry') {
@@ -291,7 +300,10 @@ function inferDataEntryToolCalls(message: string, poData: POData | undefined, hi
 
   if (!batchNo) {
     const batch = extractBatchNumber(message);
-    return batch ? [{ name: 'set_batch_number', args: { batch_no: batch } }] : [];
+    if (!batch) return [];
+    const args: Record<string, unknown> = { batch_no: batch };
+    if (/^\d+$/.test(batch)) args.batch_id = Number(batch);
+    return [{ name: 'set_batch_number', args }];
   }
 
   if (asksPostBatch(lastBotText) && (isAffirmative(message) || isPostIntent(message))) {
@@ -523,7 +535,7 @@ function buildDataEntryResponseText(
 
   const batchCall = [...toolCalls].reverse().find(call => call.name === 'set_batch_number');
   if (batchCall) {
-    return `Batch ${batchCall.args.batch_no} selected. Please select a line item to update from the list below.`;
+    return `Batch ${batchCall.args.batch_no || batchCall.args.batch_id} selected. Please select a line item to update from the list below.`;
   }
 
   if (!batchNo) {

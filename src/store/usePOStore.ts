@@ -47,6 +47,11 @@ export interface POState {
   navData: NavData | null;
 }
 
+type StartDataEntryOptions = {
+  clearBatch?: boolean;
+  clearLines?: boolean;
+};
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'bot';
@@ -108,7 +113,7 @@ export function saveSession(store: FullStore) {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
-  } catch {}
+  } catch { }
 }
 
 export function clearSession() {
@@ -190,6 +195,20 @@ function hasSameSavedChatContent(a: SavedChat, b: SavedChat): boolean {
     hasSamePOState(a.po, b.po || DEFAULT_PO);
 }
 
+function removeHydratedDataEntryLines(po: POState): POState {
+  if (po.activeFlow !== 'DATA_ENTRY' || !po.navData?.data?.line?.length) {
+    return po;
+  }
+
+  console.warn('[NavFarm Data Entry] Cleared persisted line items on hydration. Select a batch again to load fresh API lines.');
+  return {
+    ...po,
+    isActive: false,
+    activeFlow: 'NONE',
+    navData: null,
+  };
+}
+
 function findMatchingSavedChatIndex(chats: SavedChat[], messages: ChatMessage[]): number {
   const lastMessage = messages[messages.length - 1];
   if (!lastMessage) return -1;
@@ -225,7 +244,7 @@ export function usePOStore() {
   useEffect(() => {
     const saved = loadSession();
     if (saved) {
-      setPo(saved.po);
+      setPo(removeHydratedDataEntryLines(saved.po));
       // Only restore non-tool-call messages
       setHistory((saved.history || []).filter(m => !m.isToolCall));
       setSavedChats(saved.savedChats || []);
@@ -448,12 +467,24 @@ export function usePOStore() {
 
   // ── NavData Actions ──
 
-  const startDataEntry = useCallback((initialData: NavData) => {
+  const startDataEntry = useCallback((initialData: NavData, options: StartDataEntryOptions = {}) => {
+    const clearBatch = options.clearBatch ?? true;
+    const clearLines = options.clearLines ?? false;
     const sessionId = Date.now().toString();
     const navData = JSON.parse(JSON.stringify(initialData)) as NavData;
-    if (navData.data?.header?.[0]) {
+    if (clearBatch && navData.data?.header?.[0]) {
       navData.data.header[0].batcH_NO = '';
     }
+    if (clearLines && navData.data?.line) {
+      navData.data.line = [];
+    }
+    console.log('[NavFarm Data Entry] startDataEntry state update', {
+      clearBatch,
+      clearLines,
+      headerCount: navData.data?.header?.length ?? 0,
+      lineCount: navData.data?.line?.length ?? 0,
+      firstLine: navData.data?.line?.[0]?.iteM_NAME || navData.data?.line?.[0]?.parameteR_NAME || null,
+    });
     setPo(prev => ({
       ...prev,
       isActive: true,
@@ -481,8 +512,8 @@ export function usePOStore() {
       const updatedNavData = { ...prev.navData };
       updatedNavData.data = { ...updatedNavData.data };
       updatedNavData.data.line = [...updatedNavData.data.line];
-      
-      const lineIndex = updatedNavData.data.line.findIndex(l => 
+
+      const lineIndex = updatedNavData.data.line.findIndex(l =>
         String(l.iteM_NAME || l.parameteR_NAME || '').toLowerCase().trim() === itemName.toLowerCase().trim()
       );
       if (lineIndex !== -1) {

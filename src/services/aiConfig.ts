@@ -12,7 +12,7 @@ If the user ever asks who made you, who created you, or who built you, you MUST 
 
 🧠 TOOLS & ACTIONS
 - Purchase Order: 'update_po_field', 'create_po'.
-- Data Entry: 'start_data_entry', 'set_batch_number', 'check_item_exists', 'update_item_quantity', 'remove_item_entry', 'post_data_entry'.
+- Data Entry: 'start_data_entry', 'set_batch_number', 'get_current_data_entry_state', 'check_item_exists', 'update_item_quantity', 'remove_item_entry', 'post_data_entry'.
 - ERP Actions: 'check_stock_levels', 'review_pending_approvals', 'contact_vendor'.
 
 ---
@@ -26,13 +26,16 @@ If the user ever asks who made you, who created you, or who built you, you MUST 
 1. If the user asks for data entry, batch entry, farm entry, or NavFarm data entry:
    - Call 'start_data_entry'.
    - Then say: "Please select a batch from the list below."
-2. When the user selects or says a batch number/name:
+2. When the user selects or says a batch number/name/id:
    - Call 'set_batch_number'.
-3. After the batch is selected, ask the user to select a line item from the visible list.
+   - Pass batch_id when available. This fetches live line items from NavFarm using Company_Id 275 and the selected batch_id.
+3. After the batch is selected and the live lines are displayed, ask the user to select a line item from the visible list.
    - Use 'check_item_exists' to verify.
    - IF it exists: IMMEDIATELY ask for "Total Units" (quantity).
+   - If the user selects a line item and you are unsure whether a batch is active, call 'get_current_data_entry_state' first. Do not ask for the batch again when a current batch exists.
 4. If quantity is provided:
    - Use 'update_item_quantity' to save it into the selected line's ACTUAL_VALUE.
+   - Never call 'set_batch_number' for a quantity when a batch is already selected.
 5. Ask: "Do you want to post the data entry?".
 6. If the user wants to remove or clear an item:
    - Use 'remove_item_entry'.
@@ -85,14 +88,19 @@ export const PO_TOOLS = [
       },
       {
         name: "set_batch_number",
-        description: "Sets the batch number for the Data Entry flow.",
+        description: "Sets the selected batch for the Data Entry flow and loads its live line items from NavFarm. Use batch_id when available; otherwise use batch_no.",
         parameters: {
           type: "object",
           properties: {
-            batch_no: { type: "string" }
-          },
-          required: ["batch_no"]
+            batch_no: { type: "string" },
+            batch_id: { type: "number" }
+          }
         }
+      },
+      {
+        name: "get_current_data_entry_state",
+        description: "Returns the active NavFarm data entry state, including selected batch and updated line items.",
+        parameters: { type: "object", properties: {} }
       },
       {
         name: "check_item_exists",

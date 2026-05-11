@@ -37,7 +37,6 @@ import {
 } from "@/store/usePOStore";
 import { SYSTEM_INSTRUCTION, PO_TOOLS } from "@/services/aiConfig";
 
-import { INITIAL_NAV_DATA } from "@/services/navData";
 import GoogleTranslate from "@/components/GoogleTranslate";
 
 // --- Constants ---
@@ -61,6 +60,15 @@ const DEFAULT_BATCH_SUMMARY_REQUEST = {
   nature_id: "5",
   Location_Id: "1",
 } as const;
+const EMPTY_NAV_DATA: NavData = {
+  status: "success",
+  message: "Data entry details data.",
+  data: {
+    header: [],
+    line: [],
+    livestock_new: [],
+  },
+};
 
 const INVENTORY_ITEMS = [
   {
@@ -130,6 +138,7 @@ type ToolCallRequest = {
     field_name?: string;
     value?: string;
     batch_no?: string;
+    batch_id?: number | string;
     item_name?: string;
     item?: string;
     sku?: string;
@@ -458,6 +467,19 @@ function getLineSelectionText(line: NavLine) {
   return displayValue(line.iteM_NAME || line.parameteR_NAME);
 }
 
+function getQuantityFromText(text: string) {
+  const match = text.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const quantity = Number(match[0]);
+  return Number.isFinite(quantity) ? quantity : null;
+}
+
+function isLineSelectionPrompt(text: string) {
+  return /(?:line item|item name|select a line|select an item|which item|choose an item|choose a line|item to update|आइटम चुनें|लाइन चुनें|अपडेट करें|आइटम चुनिए)/i.test(
+    text,
+  );
+}
+
 function getMissingPOFields(poState: POState) {
   return PO_FIELDS.filter((field) => !poState[field]?.trim());
 }
@@ -571,6 +593,9 @@ export default function VoiceBot() {
   const [batchGroups, setBatchGroups] = useState<BatchSummaryGroup[]>([]);
   const [isBatchesLoading, setIsBatchesLoading] = useState(false);
   const [batchesError, setBatchesError] = useState<string | null>(null);
+  const [isDetailsLoading, setIsDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [selectedLineName, setSelectedLineName] = useState("");
 
   // --- Mobile Initialization ---
   useEffect(() => {
@@ -644,6 +669,7 @@ export default function VoiceBot() {
   const messagesRef = useRef(messages);
   const textRequestAbortRef = useRef<AbortController | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const selectedLineNameRef = useRef("");
 
   // --- Auto Scroll ---
   useEffect(() => {
@@ -695,6 +721,7 @@ export default function VoiceBot() {
       const params = new URLSearchParams(DEFAULT_BATCH_SUMMARY_REQUEST);
       const res = await fetch(`/api/navfarm/get-dataentry-summary?${params.toString()}`, {
         method: "GET",
+        cache: "no-store",
       });
       const result = await res.json();
       const response = result as {
@@ -725,34 +752,65 @@ export default function VoiceBot() {
   }, []);
 
   const fetchDataEntryDetails = useCallback(async (batchId: number | string) => {
-    const params = new URLSearchParams({
-      Company_Id: DEFAULT_BATCH_SUMMARY_REQUEST.Company_Id,
-      batch_id: String(batchId),
-    });
-    const res = await fetch(`/api/navfarm/get-dataentry-details?${params.toString()}`, {
-      method: "GET",
-    });
-    const result = await res.json();
-    const response = result as {
-      success?: boolean;
-      error?: string;
-      message?: string;
-    };
+    setIsDetailsLoading(true);
+    setDetailsError(null);
 
-    if (!res.ok || response.success === false) {
-      throw new Error(
-        response.error ||
-        response.message ||
-        "NavFarm data entry details fetch failed.",
-      );
+    try {
+      const params = new URLSearchParams({
+        Company_Id: DEFAULT_BATCH_SUMMARY_REQUEST.Company_Id,
+        batch_id: String(batchId),
+      });
+      console.log("[NavFarm Data Entry] Fetching dynamic line items", {
+        endpoint: "/api/navfarm/get-dataentry-details",
+        params: Object.fromEntries(params.entries()),
+      });
+      const res = await fetch(`/api/navfarm/get-dataentry-details?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      const result = await res.json();
+      const response = result as {
+        success?: boolean;
+        error?: string;
+        message?: string;
+      };
+
+      if (!res.ok || response.success === false) {
+        throw new Error(
+          response.error ||
+          response.message ||
+          "NavFarm data entry details fetch failed.",
+        );
+      }
+
+      const details = getDataEntryDetails(result);
+      if (!details) {
+        console.error("[NavFarm Data Entry] Invalid details response shape", result);
+        throw new Error("NavFarm did not return data entry details for this batch.");
+      }
+
+      console.log("[NavFarm Data Entry] Dynamic details response", {
+        batchId,
+        status: details.status,
+        message: details.message,
+        batchNo: details.data?.header?.[0]?.batcH_NO,
+        lineCount: details.data?.line?.length ?? 0,
+        firstLine: details.data?.line?.[0]?.iteM_NAME || details.data?.line?.[0]?.parameteR_NAME || null,
+        raw: details,
+      });
+      return details;
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to fetch batch details.";
+      console.error("[NavFarm Data Entry] Failed to fetch dynamic line items", {
+        batchId,
+        error: message,
+      });
+      setDetailsError(message);
+      throw err;
+    } finally {
+      setIsDetailsLoading(false);
     }
-
-    const details = getDataEntryDetails(result);
-    if (!details) {
-      throw new Error("NavFarm did not return data entry details for this batch.");
-    }
-
-    return details;
   }, []);
 
   // --- Audio Utilities ---
@@ -859,11 +917,11 @@ export default function VoiceBot() {
     call: ToolCallRequest,
   ): Promise<ToolCallResponse> => {
     if (call.name === "start_data_entry") {
-      startDataEntry(INITIAL_NAV_DATA);
+      startDataEntry(EMPTY_NAV_DATA);
       void loadBatchSummary();
-      return { 
-        success: true, 
-        message: "Data entry flow has started. I have displayed the list of available batches. Please ask the user to select one of the batches to proceed." 
+      return {
+        success: true,
+        message: "Data entry flow has started. I have displayed the list of available batches. Please ask the user to select one of the batches to proceed."
       };
     }
 
@@ -896,33 +954,86 @@ export default function VoiceBot() {
 
     // --- NavData Tool Handlers ---
     if (call.name === "set_batch_number") {
-      const batchNo = String(call.args.batch_no ?? "").trim();
-      if (!batchNo) {
-        return { success: false, error: "Batch number is required." };
+      console.log("[NavFarm Data Entry] set_batch_number tool call", call.args);
+      const selectedBatchValue = String(
+        call.args.batch_id ?? call.args.batch_no ?? "",
+      ).trim();
+      if (!selectedBatchValue) {
+        return { success: false, error: "Batch id or batch number is required." };
+      }
+
+      const currentBatchNo = textValue(
+        poRef.current.navData?.data?.header?.[0]?.batcH_NO,
+      );
+      const currentLines = poRef.current.navData?.data?.line ?? [];
+      const quantityFromBatchTool = getQuantityFromText(selectedBatchValue);
+      if (
+        poRef.current.activeFlow === "DATA_ENTRY" &&
+        currentBatchNo &&
+        currentLines.length > 0 &&
+        (quantityFromBatchTool !== null ||
+          normalizeBatchLookup(selectedBatchValue) === normalizeBatchLookup(currentBatchNo))
+      ) {
+        if (quantityFromBatchTool !== null && selectedLineNameRef.current) {
+          console.warn("[NavFarm Data Entry] Voice sent quantity as batch. Routing to update_item_quantity.", {
+            currentBatchNo,
+            selectedLine: selectedLineNameRef.current,
+            quantity: quantityFromBatchTool,
+          });
+          return handleAction({
+            name: "update_item_quantity",
+            args: {
+              item_name: selectedLineNameRef.current,
+              quantity: quantityFromBatchTool,
+            },
+          });
+        }
+
+        return {
+          success: true,
+          message: selectedLineNameRef.current
+            ? `Batch ${currentBatchNo} is already selected and item ${selectedLineNameRef.current} is active. Please provide Total Units.`
+            : `Batch ${currentBatchNo} is already selected. Please choose a line item from the list below.`,
+        };
       }
 
       const groups = batchGroups.length > 0 ? batchGroups : await loadBatchSummary();
-      const selectedBatch = findBatchSummary(groups, batchNo);
+      const selectedBatch = findBatchSummary(groups, selectedBatchValue);
+      const batchIdForDetails =
+        selectedBatch?.batch_id || (/^\d+$/.test(selectedBatchValue) ? selectedBatchValue : "");
 
-      if (!selectedBatch) {
+      console.log("[NavFarm Data Entry] Resolved selected batch", {
+        selectedBatchValue,
+        selectedBatch,
+        batchIdForDetails,
+      });
+
+      if (!batchIdForDetails) {
         return {
           success: false,
-          error: `Batch ${batchNo} was not found in the NavFarm summary.`,
+          error: `Batch ${selectedBatchValue} was not found in the NavFarm summary.`,
         };
       }
 
       try {
-        const details = await fetchDataEntryDetails(selectedBatch.batch_id);
+        const details = await fetchDataEntryDetails(batchIdForDetails);
         const detailBatchNo = textValue(
           details.data?.header?.[0]?.batcH_NO,
-          selectedBatch.batch_no,
+          selectedBatch?.batch_no || selectedBatchValue,
         );
-        startDataEntry(details);
+        console.log("[NavFarm Data Entry] Applying API line items to store", {
+          detailBatchNo,
+          lineCount: details.data?.line?.length ?? 0,
+          lines: details.data?.line,
+        });
+        selectedLineNameRef.current = "";
+        setSelectedLineName("");
+        startDataEntry(details, { clearBatch: false });
         updateNavBatch(detailBatchNo);
         showToast(`Batch ${detailBatchNo} selected.`);
         return {
           success: true,
-          message: `Batch ${detailBatchNo} selected. Now, please ask the user to choose a line item from the list I have displayed.`,
+          message: `Batch ${detailBatchNo} selected. Please choose a line item from the list below.`,
         };
       } catch (err) {
         const message =
@@ -938,9 +1049,11 @@ export default function VoiceBot() {
         const resolvedItemName = String(
           line.iteM_NAME || line.parameteR_NAME || "",
         ).trim();
+        selectedLineNameRef.current = resolvedItemName;
+        setSelectedLineName(resolvedItemName);
         return {
-          success: true, 
-          message: `Item ${resolvedItemName} has been found and selected. I have updated the view. Please ask the user to provide the 'Total Units' (Quantity) for this item.` 
+          success: true,
+          message: `Item ${resolvedItemName} selected. Please provide Total Units.`
         };
       }
       return {
@@ -950,7 +1063,9 @@ export default function VoiceBot() {
     }
 
     if (call.name === "update_item_quantity") {
-      const itemName = String(call.args.item_name ?? "").trim();
+      const itemName = String(
+        call.args.item_name ?? selectedLineNameRef.current ?? "",
+      ).trim();
       const line = findNavLine(itemName);
       if (!line) {
         return {
@@ -976,10 +1091,12 @@ export default function VoiceBot() {
       }
 
       updateNavItemQuantity(resolvedItemName, quantity);
+      selectedLineNameRef.current = resolvedItemName;
+      setSelectedLineName(resolvedItemName);
       showToast(`${resolvedItemName} quantity updated to ${quantity}`);
       return {
-        success: true, 
-        message: `Quantity for ${resolvedItemName} has been updated to ${quantity}. Now, ask the user if they want to post this data entry (Yes/No).` 
+        success: true,
+        message: `Quantity for ${resolvedItemName} has been updated to ${quantity}. Do you want to post this data entry?`
       };
     }
 
@@ -1182,7 +1299,7 @@ export default function VoiceBot() {
     }
     // Ensure any existing session is closed before starting a new one
     disconnect(true);
-    
+
     const apiKey = process.env.NEXT_PUBLIC_API_KEY;
     if (!apiKey) {
       setError("API Configuration Error. Please check your .env file.");
@@ -1307,11 +1424,11 @@ export default function VoiceBot() {
               if (sessionRef.current) {
                 const session = sessionRef.current as LiveSessionWithConnection;
                 const { conn, send, target } = getLiveSendTarget(session);
-                
+
                 console.log("🎙️ WS STATE:", conn.readyState);
                 if (isLiveConnectionClosed(conn)) {
-                   console.warn("⚠️ [Voice] Connection is closing/closed. Skipping send.");
-                   return;
+                  console.warn("⚠️ [Voice] Connection is closing/closed. Skipping send.");
+                  return;
                 }
 
                 if (typeof session.sendToolResponse === "function") {
@@ -1396,7 +1513,7 @@ export default function VoiceBot() {
    */
   const sendVoiceIntent = useCallback((text: string) => {
     if (!sessionRef.current || !isConnected) return;
-    
+
     try {
       const session = sessionRef.current as LiveSessionWithConnection;
       const { conn, send, target } = getLiveSendTarget(session);
@@ -1437,6 +1554,74 @@ export default function VoiceBot() {
     }
   }, [isConnected]);
 
+  const handleLocalLineSelection = async (line: NavLine) => {
+    const lineName = getLineSelectionText(line);
+    const result = await handleAction({
+      name: "check_item_exists",
+      args: { item_name: lineName },
+    });
+
+    addMessage({
+      role: "bot",
+      text:
+        result.success === false
+          ? result.error || `Item ${lineName} was not found.`
+          : result.message || `Item ${lineName} selected. Please provide Total Units.`,
+    });
+    setStatus(result.success === false ? "error" : "idle");
+  };
+
+  const handleLocalDataEntryMessage = async (message: string) => {
+    const currentPo = poRef.current;
+    const batchNo = currentPo.navData?.data?.header?.[0]?.batcH_NO;
+    const hasLines = (currentPo.navData?.data?.line?.length ?? 0) > 0;
+
+    if (currentPo.activeFlow !== "DATA_ENTRY" || !batchNo || !hasLines) {
+      return false;
+    }
+
+    const lineQuery = message
+      .replace(/^\s*(?:i\s+)?(?:select|choose|picked?|use)\s+(?:item|line item|line)?\s*/i, "")
+      .trim();
+    const selectedLine = findNavLine(lineQuery || message);
+    if (selectedLine) {
+      await handleLocalLineSelection(selectedLine);
+      return true;
+    }
+
+    const quantity = getQuantityFromText(message);
+    if (quantity !== null && selectedLineNameRef.current) {
+      const result = await handleAction({
+        name: "update_item_quantity",
+        args: {
+          item_name: selectedLineNameRef.current,
+          quantity,
+        },
+      });
+
+      addMessage({
+        role: "bot",
+        text:
+          result.success === false
+            ? result.error || "I could not update the quantity."
+            : result.message || `Quantity updated to ${quantity}. Do you want to post this data entry?`,
+      });
+      setStatus(result.success === false ? "error" : "idle");
+      return true;
+    }
+
+    if (quantity !== null && !selectedLineNameRef.current) {
+      addMessage({
+        role: "bot",
+        text: "Please select a line item first, then provide Total Units.",
+      });
+      setStatus("idle");
+      return true;
+    }
+
+    return false;
+  };
+
   const handleSendMessage = async (messageOverride?: string) => {
     if (viewingSavedChat) return;
     const draftMessage = messageOverride ?? inputText;
@@ -1472,20 +1657,16 @@ export default function VoiceBot() {
         sessionId: Date.now().toString(),
       };
     } else if (isDataEntryIntent && !poRef.current.isActive) {
-      const navData = JSON.parse(JSON.stringify(INITIAL_NAV_DATA));
-      if (navData.data?.header?.[0]) {
-        navData.data.header[0].batcH_NO = "";
-      }
-      startDataEntry(navData);
+      startDataEntry(EMPTY_NAV_DATA);
       requestPoData = {
         ...poRef.current,
         isActive: true,
         activeFlow: "DATA_ENTRY",
-        navData,
+        navData: EMPTY_NAV_DATA,
         sessionId: Date.now().toString(),
       };
       void loadBatchSummary();
-      
+
       // If voice is active, we should also trigger the tool call internally
       if (isConnected && sessionRef.current) {
         handleAction({ name: "start_data_entry", args: {} });
@@ -1495,6 +1676,10 @@ export default function VoiceBot() {
     // Add user message to store (persisted)
     addMessage({ role: "user", text: messageToSend });
     setStatus("thinking");
+
+    if (await handleLocalDataEntryMessage(messageToSend)) {
+      return;
+    }
 
     if (sessionRef.current && isConnected) {
       sendVoiceIntent(messageToSend);
@@ -1575,6 +1760,49 @@ export default function VoiceBot() {
       setIsTextSending(false);
       textRequestAbortRef.current = null;
     }
+  };
+
+  const handleBatchSelect = async (batch: BatchSummary) => {
+    if (viewingSavedChat || isDetailsLoading) return;
+
+    console.log("[NavFarm Data Entry] Batch button selected", batch);
+    stopAllAudio();
+    addMessage({ role: "user", text: `Select batch ${batch.batch_no}` });
+    setStatus("thinking");
+
+    try {
+      const result = await handleAction({
+        name: "set_batch_number",
+        args: {
+          batch_id: batch.batch_id,
+          batch_no: batch.batch_no,
+        },
+      });
+
+      addMessage({
+        role: "bot",
+        text:
+          result.success === false
+            ? result.error || "Failed to load batch line items."
+            : result.message || `Batch ${batch.batch_no} selected. Please choose a line item from the list below.`,
+      });
+      setStatus(result.success === false ? "error" : "idle");
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to load batch line items.";
+      setError(message);
+      addMessage({ role: "bot", text: message });
+      setStatus("error");
+    }
+  };
+
+  const handleLineSelect = async (line: NavLine) => {
+    if (viewingSavedChat) return;
+
+    stopAllAudio();
+    addMessage({ role: "user", text: `I select item ${getLineSelectionText(line)}` });
+    setStatus("thinking");
+    await handleLocalLineSelection(line);
   };
 
   const getInsights = () => [
@@ -2088,8 +2316,9 @@ export default function VoiceBot() {
                                   {group.batches.map((batch) => (
                                     <button
                                       key={`${group.lob_id}-${batch.batch_id}`}
-                                      onClick={() => void handleSendMessage("Select batch " + batch.batch_no)}
-                                      className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-emerald-500 hover:bg-emerald-50/30 transition-all text-left flex justify-between items-center gap-3 group"
+                                      onClick={() => void handleBatchSelect(batch)}
+                                      disabled={isDetailsLoading}
+                                      className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-emerald-500 hover:bg-emerald-50/30 disabled:opacity-60 disabled:cursor-wait transition-all text-left flex justify-between items-center gap-3 group"
                                     >
                                       <div className="min-w-0">
                                         <p className="text-sm font-bold text-zinc-800 dark:text-zinc-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 break-words">
@@ -2103,6 +2332,9 @@ export default function VoiceBot() {
                                         </p>
                                       </div>
                                       <div className="flex items-center gap-2 flex-shrink-0">
+                                        {isDetailsLoading && (
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
+                                        )}
                                         <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
                                           {displayValue(batch.status)}
                                         </span>
@@ -2119,9 +2351,8 @@ export default function VoiceBot() {
                         {msg.role === "bot" &&
                           po.activeFlow === "DATA_ENTRY" &&
                           po.navData?.data?.header?.[0]?.batcH_NO &&
-                          /(?:item name|select a line|select an item|which item|choose an item|item to update|आइटम चुनें|लाइन चुनें|अपडेट करें|आइटम चुनिए)/i.test(
-                            msg.text,
-                          ) &&
+                          po.navData?.data?.line?.length > 0 &&
+                          isLineSelectionPrompt(msg.text) &&
                           messages[messages.length - 1]?.id === msg.id && (
                             <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-2 w-full min-w-[240px]">
                               <p className="col-span-full text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-1">
@@ -2130,16 +2361,18 @@ export default function VoiceBot() {
                               {po.navData?.data?.line.map((line, idx) => (
                                 <button
                                   key={idx}
-                                  onClick={() =>
-                                    void handleSendMessage(
-                                      "I select item " + getLineSelectionText(line),
-                                    )
-                                  }
-                                  className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/50 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:border-emerald-300 dark:hover:border-emerald-700 transition-all text-left group shadow-sm"
+                                  onClick={() => void handleLineSelect(line)}
+                                  className={`w-full px-4 py-3 rounded-xl border transition-all text-left group shadow-sm ${selectedLineName === getLineSelectionText(line)
+                                    ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20"
+                                    : "border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/50 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:border-emerald-300 dark:hover:border-emerald-700"
+                                    }`}
                                 >
                                   <div className="flex flex-col gap-1">
                                     <p className="text-[12px] font-bold text-zinc-800 dark:text-zinc-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
                                       {getLineSelectionText(line)}
+                                    </p>
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                                      {displayValue(line.parameteR_TYPE, "Line Item")}
                                     </p>
                                     <div className="flex justify-between items-center text-[10px]">
                                       <span className="text-zinc-500 dark:text-zinc-400">Stock: {displayValue(line.stock)}</span>
@@ -2356,19 +2589,42 @@ export default function VoiceBot() {
                   </div>
 
                   {/* Data Entry Items Card */}
-                  {po.activeFlow === "DATA_ENTRY" && po.navData?.data?.line && (
+                  {po.activeFlow === "DATA_ENTRY" && (
                     <div className="mt-2">
                       <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600 px-1 mb-2 flex items-center gap-1">
                         <ClipboardList size={10} /> Data Entry Items
                       </p>
-                      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1 scrollbar-hide">
+                      {isDetailsLoading && (
+                        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 text-[12px] font-semibold text-zinc-500 dark:text-zinc-400">
+                          <Loader2 className="w-4 h-4 animate-spin text-emerald-500" />
+                          Loading selected batch lines...
+                        </div>
+                      )}
+                      {!isDetailsLoading && detailsError && (
+                        <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-rose-50 dark:bg-rose-900/20 text-[12px] text-rose-700 dark:text-rose-300">
+                          <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                          <span>{detailsError}</span>
+                        </div>
+                      )}
+                      {!isDetailsLoading && !detailsError && !po.navData?.data?.header?.[0]?.batcH_NO && (
+                        <div className="px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 text-[12px] text-zinc-500 dark:text-zinc-400">
+                          Select a batch to load line items.
+                        </div>
+                      )}
+                      {!isDetailsLoading && !detailsError && po.navData?.data?.header?.[0]?.batcH_NO && (po.navData?.data?.line?.length ?? 0) === 0 && (
+                        <div className="px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 text-[12px] text-zinc-500 dark:text-zinc-400">
+                          No line items returned for this batch.
+                        </div>
+                      )}
+                      {!isDetailsLoading && !detailsError && po.navData?.data?.header?.[0]?.batcH_NO && (po.navData?.data?.line?.length ?? 0) > 0 && (
+                        <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1 scrollbar-hide">
                         {po.navData.data.line.map((line, idx) => (
                           <button
                             key={idx}
-                            onClick={() =>
-                              void handleSendMessage(getLineSelectionText(line))
-                            }
-                            className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all group ${line.actuaL_VALUE > 0
+                            onClick={() => void handleLineSelect(line)}
+                            className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all group ${selectedLineName === getLineSelectionText(line)
+                              ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700"
+                              : line.actuaL_VALUE > 0
                               ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800"
                               : "bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 hover:border-emerald-500"
                               }`}
@@ -2432,7 +2688,8 @@ export default function VoiceBot() {
                             </div>
                           </button>
                         ))}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   )}
 

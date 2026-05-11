@@ -40,6 +40,23 @@ function isNavFarmFailure(data: unknown): boolean {
   return typeof status === 'string' && status.toLowerCase() === 'failure';
 }
 
+function getDetailsStats(data: unknown) {
+  const payload = data as {
+    data?: {
+      header?: Array<Record<string, unknown>>;
+      line?: Array<Record<string, unknown>>;
+    };
+  };
+  const header = payload.data?.header ?? [];
+  const line = payload.data?.line ?? [];
+
+  return {
+    batchNo: header[0]?.batcH_NO ?? null,
+    lineCount: line.length,
+    firstLine: line[0]?.iteM_NAME || line[0]?.parameteR_NAME || null,
+  };
+}
+
 function toParam(value: unknown, fallback = '') {
   const text = String(value ?? '').trim();
   return text || fallback;
@@ -86,6 +103,14 @@ async function handleDetailsRequest(params: Required<DetailsParams>) {
     upstreamUrl.searchParams.set('Company_Id', String(params.Company_Id));
     upstreamUrl.searchParams.set('batch_id', String(params.batch_id));
 
+    console.log('[NavFarm Details API] Fetching upstream data entry details', {
+      url,
+      params: {
+        Company_Id: String(params.Company_Id),
+        batch_id: String(params.batch_id),
+      },
+    });
+
     const upstream = await fetch(upstreamUrl, {
       method: 'GET',
       headers: {
@@ -99,6 +124,12 @@ async function handleDetailsRequest(params: Required<DetailsParams>) {
 
     const data = await parseUpstreamResponse(upstream);
     const navFarmMessage = getNavFarmMessage(data);
+    console.log('[NavFarm Details API] Upstream response received', {
+      ok: upstream.ok,
+      status: upstream.status,
+      message: navFarmMessage,
+      ...getDetailsStats(data),
+    });
 
     if (!upstream.ok) {
       return NextResponse.json(
@@ -123,11 +154,18 @@ async function handleDetailsRequest(params: Required<DetailsParams>) {
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      message: navFarmMessage || 'Data entry details fetched successfully.',
-      data,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        message: navFarmMessage || 'Data entry details fetched successfully.',
+        data,
+      },
+      {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        },
+      },
+    );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to fetch data entry details from NavFarm.';
     return NextResponse.json(
