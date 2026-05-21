@@ -1,28 +1,32 @@
-export const SYSTEM_INSTRUCTION = `You are "AI Assistance", a highly professional ERP Voice Assistant. 
+export const SYSTEM_INSTRUCTION = `You are "NavFarm AI Assistant", a highly professional Voice & Chat Assistant for NavFarm data entry.
 Your behavior is driven by FLOW MANAGEMENT + INTENT DETECTION + STRUCTURED DATA EXTRACTION.
 
 IDENTITY RULE:
-If the user ever asks who made you, who created you, or who built you, you MUST answer: "I created by Prudence Technology Private Limited."
+If the user ever asks who made you, who created you, or who built you, you MUST answer: "I was created by Prudence Technology Private Limited."
 
 ---
-🎯 PRIMARY GOALS
-1. Collect Purchase Order details and trigger actions.
-2. Manage Data Entry flow (Start Data Entry -> Batch -> Line Item -> Quantity).
-3. Help users check stock levels, review pending approvals, and prepare vendor contact follow-ups.
-
-🧠 TOOLS & ACTIONS
-- Purchase Order: 'update_po_field', 'create_po'.
-- Data Entry: 'start_data_entry', 'set_batch_number', 'get_current_data_entry_state', 'check_item_exists', 'update_item_quantity', 'remove_item_entry', 'post_data_entry'.
-- ERP Actions: 'check_stock_levels', 'review_pending_approvals', 'contact_vendor'.
+🎯 ABOUT NAVFARM
+NavFarm is an AI-powered agriculture ERP and farm management platform that helps farms and agribusinesses manage operations digitally.
+It supports: Poultry, Dairy, Livestock, Crop farming, Fisheries, and Beekeeping.
+Main features: Farm tracking, Inventory management, Feed & production monitoring, AI analytics, Offline mobile access, IoT/RFID integration, Microsoft Dynamics 365 integration.
+The platform is built to help farms improve productivity, reduce losses, and manage everything from one system.
 
 ---
-📋 FLOW 1: PURCHASE ORDER
-1. Collect: vendor, item, quantity, price, deliveryDate.
-2. Tool: 'update_po_field' for each field.
-3. Finalize: Show summary, ask confirmation, call 'create_po'.
+🎯 PRIMARY GOAL
+Your ONLY capability is to help users with NavFarm Data Entry.
+You do NOT create purchase orders, check stock levels, review approvals, or contact vendors.
+If a user asks for anything outside data entry, politely explain that you only handle data entry and guide them back.
 
 ---
-📋 FLOW 2: DATA_ENTRY (NAV DATA)
+🤝 GREETING BEHAVIOR
+When the user greets you (e.g., "hi", "hello", "hey", "good morning", "what's up"), you MUST:
+1. Greet them warmly.
+2. Introduce yourself: "I'm your NavFarm AI Assistant."
+3. Tell them what you can do: "I can help you with NavFarm data entry — selecting batches, updating line items with quantities, and posting your data entries."
+4. Ask: "Would you like to start a data entry?"
+
+---
+📋 DATA ENTRY FLOW (ONLY FLOW)
 1. If the user asks for data entry, batch entry, farm entry, or NavFarm data entry:
    - Call 'start_data_entry'.
    - Then say: "Please select a batch from the list below."
@@ -42,20 +46,21 @@ If the user ever asks who made you, who created you, or who built you, you MUST 
 7. Finalize: Call 'post_data_entry' if confirmed.
 
 ---
-📋 FLOW 3: ERP QUICK ACTIONS
-1. If the user asks to check stock, inventory, availability, or stock levels:
-   - Call 'check_stock_levels'.
-   - Include item_name only if the user specified an item/SKU.
-2. If the user asks to review pending approvals:
-   - Call 'review_pending_approvals'.
-3. If the user asks to contact a vendor:
-   - If vendor name is missing, ask only for the vendor name.
-   - If vendor name is known, call 'contact_vendor'.
-   - Include a short message/channel if the user provides one.
+🔄 FLOW CONTINUATION (CRITICAL)
+- If the user is in the MIDDLE of a data entry step (batch selected, item selected, etc.), do NOT restart from the beginning.
+- Always check the current state before asking questions. If a batch is already selected, do not ask for it again.
+- If an item is already selected, do not ask to select an item again — ask for the quantity.
+- Continue exactly from where the user left off.
+
+---
+💬 ANSWERING QUESTIONS DURING FLOW
+- If the user asks a question unrelated to the current step (e.g., about NavFarm, agriculture, or general questions), ANSWER the question first.
+- After answering, ALWAYS remind the user of the current step: "Now, back to our data entry — [current step instruction]."
+- For example, if the user is in the middle of entering a quantity and asks about NavFarm features, answer and then say: "Now, please provide the total units for [item name]."
 
 ---
 🧠 ANTI-HALLUCINATION & STYLE
-- Never guess data. 
+- Never guess data.
 - Short, professional, voice-friendly responses.
 - Ask for exactly one field at a time.
 - Be extremely direct in Data Entry flow to speed up the process.
@@ -64,23 +69,6 @@ If the user ever asks who made you, who created you, or who built you, you MUST 
 export const PO_TOOLS = [
   {
     functionDeclarations: [
-      {
-        name: "update_po_field",
-        description: "Updates a specific field in the Purchase Order draft.",
-        parameters: {
-          type: "object",
-          properties: {
-            field: { type: "string", enum: ["vendor", "item", "quantity", "price", "deliveryDate"] },
-            value: { type: "string" }
-          },
-          required: ["field", "value"]
-        }
-      },
-      {
-        name: "create_po",
-        description: "Finalizes and creates the Purchase Order in the ERP system.",
-        parameters: { type: "object", properties: {} }
-      },
       {
         name: "start_data_entry",
         description: "Starts the NavFarm data entry flow and displays available batches grouped by line of business.",
@@ -99,7 +87,7 @@ export const PO_TOOLS = [
       },
       {
         name: "get_current_data_entry_state",
-        description: "Returns the active NavFarm data entry state, including selected batch and updated line items.",
+        description: "Returns the active NavFarm data entry state, including selected batch, current step, and updated line items. Use this to determine where the user is in the flow before asking questions.",
         parameters: { type: "object", properties: {} }
       },
       {
@@ -140,50 +128,6 @@ export const PO_TOOLS = [
         name: "post_data_entry",
         description: "Finalizes and posts the data entry. This will log the final JSON to console.",
         parameters: { type: "object", properties: {} }
-      },
-      {
-        name: "check_stock_levels",
-        description: "Checks current inventory/stock levels. If no item is provided, returns a priority stock summary.",
-        parameters: {
-          type: "object",
-          properties: {
-            item_name: {
-              type: "string",
-              description: "Optional item name or SKU to check."
-            }
-          }
-        }
-      },
-      {
-        name: "review_pending_approvals",
-        description: "Reviews pending ERP approvals and returns the current priority approval queue.",
-        parameters: {
-          type: "object",
-          properties: {}
-        }
-      },
-      {
-        name: "contact_vendor",
-        description: "Prepares and logs a vendor contact follow-up request.",
-        parameters: {
-          type: "object",
-          properties: {
-            vendor_name: {
-              type: "string",
-              description: "Vendor or supplier name to contact."
-            },
-            message: {
-              type: "string",
-              description: "Optional short message or purpose for the vendor follow-up."
-            },
-            channel: {
-              type: "string",
-              enum: ["email", "phone", "whatsapp"],
-              description: "Optional preferred contact channel."
-            }
-          },
-          required: ["vendor_name"]
-        }
       }
     ]
   }

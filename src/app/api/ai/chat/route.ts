@@ -23,12 +23,7 @@ type NavData = {
 };
 
 type POData = {
-  vendor?: string;
-  item?: string;
-  quantity?: string;
-  price?: string;
-  deliveryDate?: string;
-  activeFlow?: 'NONE' | 'PO' | 'DATA_ENTRY';
+  activeFlow?: 'NONE' | 'DATA_ENTRY';
   navData?: NavData | null;
 };
 
@@ -68,14 +63,8 @@ const DATA_ENTRY_TOOL_NAMES = new Set([
   'remove_item_entry',
   'post_data_entry',
 ]);
-const ERP_ACTION_TOOL_NAMES = new Set([
-  'check_stock_levels',
-  'review_pending_approvals',
-  'contact_vendor',
-]);
 const KNOWN_TOOL_NAMES = new Set([
   ...DATA_ENTRY_TOOL_NAMES,
-  ...ERP_ACTION_TOOL_NAMES,
 ]);
 
 function normalizeAssistantText(text: string): string {
@@ -198,17 +187,6 @@ function normalizeToolCalls(calls: ChatCompletionMessageToolCall[] | undefined, 
       const quantity = Number(args.quantity ?? args.actual_value ?? args.actualValue ?? args.value);
       if (!Number.isFinite(quantity)) continue;
       args.quantity = quantity;
-    }
-
-    if (name === 'check_stock_levels') {
-      args.item_name = String(args.item_name ?? args.item ?? args.sku ?? '').trim();
-    }
-
-    if (name === 'contact_vendor') {
-      args.vendor_name = String(args.vendor_name ?? args.vendor ?? args.supplier ?? '').trim();
-      args.message = String(args.message ?? args.note ?? args.reason ?? '').trim();
-      args.channel = String(args.channel ?? '').trim().toLowerCase();
-      if (!args.vendor_name) continue;
     }
 
     normalizedCalls.push({
@@ -336,81 +314,14 @@ function inferDataEntryToolCalls(message: string, poData: POData | undefined, hi
   return [];
 }
 
-function cleanupExtractedName(value: string): string {
-  return value
-    .replace(/\b(?:vendor|supplier|please|kindly)\b/gi, ' ')
-    .replace(/[.!?]+$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function extractStockItemName(message: string): string {
-  return message
-    .replace(/\b(?:check|show|get|review|current|stock|stocks|levels?|inventory|availability|available|for|of|item|sku|please|kindly|is|the)\b/gi, ' ')
-    .replace(/[.!?]+$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function extractVendorName(message: string): string {
-  const explicit = message.match(/\b(?:vendor|supplier)\s+(?:name\s+)?(?:is\s+)?([a-z][\w\s&.-]{1,40}?)(?:\s+(?:about|regarding|via|by|on|for|to|with|message|email|call|phone|whatsapp)|[.!?]|$)/i);
-  if (explicit?.[1]) return cleanupExtractedName(explicit[1]);
-
-  const direct = message.match(/\b(?:contact|call|email|message|whatsapp|reach out to)\s+([a-z][\w\s&.-]{1,40}?)(?:\s+(?:about|regarding|via|by|on|for|with|vendor|supplier)|[.!?]|$)/i);
-  if (direct?.[1]) return cleanupExtractedName(direct[1]);
-
-  return '';
-}
-
-function extractContactMessage(message: string): string {
-  const match = message.match(/\b(?:about|regarding|for)\s+(.+)$/i);
-  return match?.[1]?.replace(/[.!?]+$/g, '').trim() ?? '';
-}
-
-function extractContactChannel(message: string): string {
-  if (/\bwhatsapp\b/i.test(message)) return 'whatsapp';
-  if (/\b(phone|call)\b/i.test(message)) return 'phone';
-  if (/\bemail|mail\b/i.test(message)) return 'email';
-  return '';
-}
-
-function inferErpActionToolCalls(message: string): NormalizedToolCall[] {
-  const lookup = normalizeLookup(message);
-  if (!lookup) return [];
-
-  if ((lookup.includes('pending') && lookup.includes('approval')) || lookup === 'review approvals') {
-    return [{ name: 'review_pending_approvals', args: {} }];
-  }
-
-  if (/\b(stock|stocks|inventory|availability|available)\b/i.test(message)) {
-    return [{
-      name: 'check_stock_levels',
-      args: { item_name: extractStockItemName(message) },
-    }];
-  }
-
-  const hasContactIntent = /\b(contact|call|email|message|whatsapp|reach out)\b/i.test(message);
-  if (hasContactIntent) {
-    const vendorName = extractVendorName(message);
-    if (vendorName) {
-      return [{
-        name: 'contact_vendor',
-        args: {
-          vendor_name: vendorName,
-          message: extractContactMessage(message),
-          channel: extractContactChannel(message),
-        },
-      }];
-    }
-  }
-
-  return [];
-}
-
-function inferToolCalls(message: string, poData: POData | undefined, history: HistoryMessage[]): NormalizedToolCall[] {
-  const dataEntryCalls = inferDataEntryToolCalls(message, poData, history);
-  if (dataEntryCalls.length > 0) return dataEntryCalls;
-  return inferErpActionToolCalls(message);
+function getDataEntryStep(poData: POData | undefined): string {
+  if (!poData || poData.activeFlow !== 'DATA_ENTRY') return 'idle';
+  const batchNo = getBatchNo(poData);
+  const lines = getNavLines(poData);
+  if (!batchNo) return 'awaiting_batch';
+  const updatedLines = lines.filter(line => Number(line.actuaL_VALUE) > 0);
+  if (updatedLines.length > 0) return 'ready_to_post';
+  return 'awaiting_item_selection';
 }
 
 function buildFlowContext(poData?: POData): string {
@@ -418,6 +329,7 @@ function buildFlowContext(poData?: POData): string {
     const batchNo = getBatchNo(poData);
     const lines = getNavLines(poData);
     const updatedLines = lines.filter(line => Number(line.actuaL_VALUE) > 0);
+    const currentStep = getDataEntryStep(poData);
     const lineList = lines
       .map((line, index) => {
         const uom = line.dataentrY_UOM ? ` ${line.dataentrY_UOM}` : '';
@@ -426,11 +338,29 @@ function buildFlowContext(poData?: POData): string {
       })
       .join('\n');
 
+    let stepGuidance = '';
+    switch (currentStep) {
+      case 'awaiting_batch':
+        stepGuidance = 'CURRENT STEP: Waiting for batch selection. Show available batches and ask the user to select one.';
+        break;
+      case 'awaiting_item_selection':
+        stepGuidance = 'CURRENT STEP: Batch is selected. Show the list of line items and ask the user to select one.';
+        break;
+      case 'ready_to_post':
+        stepGuidance = 'CURRENT STEP: Items have been updated. Ask if the user wants to post the data entry or update more items.';
+        break;
+      default:
+        stepGuidance = 'CURRENT STEP: Starting data entry flow.';
+    }
+
     return [
       'CURRENT DATA ENTRY STATE:',
       'Flow: DATA_ENTRY',
+      `Current Step: ${currentStep}`,
       `Batch Number: ${batchNo || 'Not set'}`,
       `Updated Items: ${updatedLines.map(line => `${getLineLabel(line)} (${line.actuaL_VALUE})`).join(', ') || 'None'}`,
+      '',
+      stepGuidance,
       '',
       'AVAILABLE LINE ITEMS:',
       lineList || 'No line items available.',
@@ -445,10 +375,12 @@ function buildFlowContext(poData?: POData): string {
       '7. When quantity is provided, call update_item_quantity.',
       '8. After updating quantity, ask: "Do you want to post the data entry?".',
       '9. If the user confirms (Yes), call post_data_entry.',
+      '10. IMPORTANT: Do NOT restart the flow from the beginning. Continue from the current step.',
+      '11. If the user asks a question, answer it first, then remind them of the current step.',
     ].join('\n');
   }
 
-  return 'Flow: NONE. Greet the user and ask how you can help (e.g., Data Entry, Stock Check).';
+  return 'Flow: NONE. Greet the user and introduce yourself as the NavFarm AI Assistant. Tell them you can help with NavFarm data entry — selecting batches, updating line items, and posting data entries. Ask if they would like to start a data entry.';
 }
 
 function buildSystemPrompt(poData?: POData): string {
@@ -465,6 +397,8 @@ function buildSystemPrompt(poData?: POData): string {
     '- If the user message is unclear, ask a brief clarification question instead of assuming values.',
     '- Never claim an action succeeded unless it actually did.',
     '- Never invent data.',
+    '- If user is in the middle of data entry, do NOT restart. Continue from current step.',
+    '- If user asks a question during data entry, answer it first then guide back to the current step.',
   ].join('\n');
 }
 
@@ -581,15 +515,8 @@ export async function POST(req: Request) {
       && asksAddAnother(lastBotText)
       && (isAffirmative(message) || isNegative(message));
     const modelToolCalls = isAnsweringAddAnother ? [] : normalizeToolCalls(aiMessage?.tool_calls, poData);
-    const inferredToolCalls = modelToolCalls.length > 0 || isAnsweringAddAnother ? [] : inferToolCalls(message, poData, recentHistory);
+    const inferredToolCalls = modelToolCalls.length > 0 || isAnsweringAddAnother ? [] : inferDataEntryToolCalls(message, poData, recentHistory);
     const toolCalls = modelToolCalls.length > 0 ? modelToolCalls : inferredToolCalls;
-    const hasInferredErpAction = modelToolCalls.length === 0
-      && inferredToolCalls.some(call => ERP_ACTION_TOOL_NAMES.has(call.name));
-
-    rawBotText = buildDataEntryResponseText(message, poData, recentHistory, toolCalls, rawBotText);
-    if (hasInferredErpAction) {
-      rawBotText = '';
-    }
 
     console.log('[Chat API] OpenAI response received:', {
       textLength: rawBotText.length,
@@ -601,11 +528,9 @@ export async function POST(req: Request) {
       : 'I could not process that. Please try again.';
 
     const normalizedText = normalizeAssistantText(rawBotText || fallbackText);
-    const parsedFields = poData?.activeFlow === 'DATA_ENTRY' ? {} : parseFieldsFromMessage(message, poData);
 
     return NextResponse.json({
       text: normalizedText,
-      parsedFields,
       toolCalls,
     });
   } catch (error: unknown) {
@@ -618,42 +543,3 @@ export async function POST(req: Request) {
   }
 }
 
-function parseFieldsFromMessage(message: string, currentPO?: POData): Record<string, string> {
-  const extracted: Record<string, string> = {};
-  const text = message.toLowerCase().trim();
-
-  // Vendor: "from Bosch", "vendor Siemens", "for Tata"
-  const vendorMatch = text.match(/(?:vendor[:\s]+|from[:\s]+|supplier[:\s]+)([a-zA-Z][\w\s]{1,30}?)(?:\s+(?:with|for|at|on|,|\.)|$)/i);
-  if (vendorMatch && !currentPO?.vendor) {
-    extracted.vendor = vendorMatch[1].trim();
-  }
-
-  // Quantity + Item: "5 laptops", "order 10 chairs"
-  const qtyItemMatch = message.match(/\b(\d+)\s+([a-zA-Z][\w\s]{1,20}?)(?:\s+(?:from|for|at|delivery|,|\.)|$)/i);
-  if (qtyItemMatch) {
-    if (!currentPO?.quantity) extracted.quantity = qtyItemMatch[1];
-    if (!currentPO?.item) extracted.item = qtyItemMatch[2].trim();
-  }
-
-  // Price: "$500", "at 500", "price 500", "500 each"
-  const priceMatch = message.match(/(?:\$|price[:\s]+|at[:\s]+|for[:\s]+|rs\.?[:\s]*)?(\d[\d,]*(?:\.\d{1,2})?)\s*(?:dollars?|rupees?|each|per unit|usd|inr)?/i);
-  if (priceMatch && (text.includes('price') || text.includes('$') || text.includes('₹') || text.includes('rs') || text.includes('each') || text.includes('per'))) {
-    if (!currentPO?.price) extracted.price = priceMatch[1].replace(',', '');
-  }
-
-  // Delivery date: "tomorrow", "next Monday", "on 25th", "26 August"
-  const datePatterns = [
-    /\b(tomorrow|today|next\s+\w+|this\s+\w+)\b/i,
-    /\b(\d{1,2}[\s\/\-]\w+[\s\/\-]?\d{0,4})\b/i,
-    /\b(\w+\s+\d{1,2}(?:st|nd|rd|th)?(?:\s+\d{4})?)\b/i,
-  ];
-  for (const pattern of datePatterns) {
-    const match = message.match(pattern);
-    if (match && !currentPO?.deliveryDate) {
-      extracted.deliveryDate = match[1];
-      break;
-    }
-  }
-
-  return extracted;
-}

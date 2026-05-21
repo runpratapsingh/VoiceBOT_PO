@@ -9,8 +9,8 @@ import { useState, useEffect, useCallback } from 'react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type FlowType = 'NONE' | 'PO' | 'DATA_ENTRY';
-export type POStep = 'idle' | 'vendor' | 'item' | 'quantity' | 'price' | 'deliveryDate' | 'confirm' | 'done';
+export type FlowType = 'NONE' | 'DATA_ENTRY';
+export type POStep = 'idle' | 'done';
 
 export interface NavHeader {
   batcH_NO: string;
@@ -35,11 +35,6 @@ export interface NavData {
 }
 
 export interface POState {
-  vendor: string;
-  item: string;
-  quantity: string;
-  price: string;
-  deliveryDate: string;
   currentStep: POStep;
   isActive: boolean;
   sessionId: string;
@@ -82,11 +77,6 @@ export interface FullStore {
 // ─── Default state ─────────────────────────────────────────────────────────────
 
 const DEFAULT_PO: POState = {
-  vendor: '',
-  item: '',
-  quantity: '',
-  price: '',
-  deliveryDate: '',
   currentStep: 'idle',
   isActive: false,
   sessionId: '',
@@ -121,20 +111,16 @@ export function clearSession() {
   localStorage.removeItem(STORAGE_KEY);
 }
 
-export function getMissingFields(po: POState): POStep[] {
-  const fields: POStep[] = ['vendor', 'item', 'quantity', 'price', 'deliveryDate'];
-  return fields.filter(f => !po[f as keyof POState]);
+export function getMissingFields(): POStep[] {
+  return [];
 }
 
-export function getNextStep(po: POState): POStep {
-  const missing = getMissingFields(po);
-  if (missing.length === 0) return 'confirm';
-  return missing[0];
+export function getNextStep(): POStep {
+  return 'idle';
 }
 
-export function getCompletedCount(po: POState): number {
-  const fields = ['vendor', 'item', 'quantity', 'price', 'deliveryDate'];
-  return fields.filter(f => !!po[f as keyof POState]).length;
+export function getCompletedCount(): number {
+  return 0;
 }
 
 function getVisibleMessages(messages: ChatMessage[]): ChatMessage[] {
@@ -176,12 +162,7 @@ function hasSameMessages(a: ChatMessage[], b: ChatMessage[]): boolean {
 
 function hasSamePOState(a: POState | undefined, b: POState): boolean {
   if (!a) return false;
-  return a.vendor === b.vendor &&
-    a.item === b.item &&
-    a.quantity === b.quantity &&
-    a.price === b.price &&
-    a.deliveryDate === b.deliveryDate &&
-    a.currentStep === b.currentStep &&
+  return a.currentStep === b.currentStep &&
     a.isActive === b.isActive &&
     a.sessionId === b.sessionId &&
     a.activeFlow === b.activeFlow &&
@@ -220,12 +201,12 @@ function findMatchingSavedChatIndex(chats: SavedChat[], messages: ChatMessage[])
 }
 
 export function formatPOSummary(po: POState): string {
-  return `📋 Purchase Order Summary:
-• Vendor: ${po.vendor || '—'}
-• Item: ${po.item || '—'}
-• Quantity: ${po.quantity || '—'}
-• Price: $${po.price || '—'}
-• Delivery: ${po.deliveryDate || '—'}`;
+  const batchNo = po.navData?.data?.header?.[0]?.batcH_NO || '—';
+  const updatedLines = po.navData?.data?.line?.filter(l => Number(l.actuaL_VALUE) > 0) || [];
+  return `📋 Data Entry Summary:
+• Batch: ${batchNo}
+• Updated Items: ${updatedLines.length}
+• Flow: ${po.activeFlow}`;
 }
 
 // ─── Hook ──────────────────────────────────────────────────────────────────────
@@ -285,28 +266,7 @@ export function usePOStore() {
   // ── PO Actions ──
 
   const updatePOField = useCallback((field: keyof POState, value: string) => {
-    setPo(prev => {
-      const updated = { ...prev, [field]: value };
-      const next = getNextStep(updated);
-      return { ...updated, currentStep: next };
-    });
-  }, []);
-
-  const startPO = useCallback(() => {
-    const sessionId = Date.now().toString();
-    setPo(prev => ({
-      ...prev,
-      isActive: true,
-      activeFlow: 'PO',
-      navData: null,
-      currentStep: 'vendor',
-      sessionId,
-      vendor: '',
-      item: '',
-      quantity: '',
-      price: '',
-      deliveryDate: '',
-    }));
+    setPo(prev => ({ ...prev, [field]: value }));
   }, []);
 
   const resetPO = useCallback(() => {
@@ -316,7 +276,6 @@ export function usePOStore() {
 
   const confirmPO = useCallback(() => {
     setPo(prev => ({ ...prev, currentStep: 'done', isActive: false }));
-    // Keep history, just mark done
   }, []);
 
   // ── Chat History Actions ──
@@ -534,13 +493,12 @@ export function usePOStore() {
     viewingSavedChat,
     hydrated,
     // Computed
-    missingFields: getMissingFields(po),
-    completedCount: getCompletedCount(po),
-    totalFields: 5,
-    nextStep: getNextStep(po),
+    missingFields: getMissingFields(),
+    completedCount: getCompletedCount(),
+    totalFields: 0,
+    nextStep: getNextStep(),
     // PO actions
     updatePOField,
-    startPO,
     resetPO,
     confirmPO,
     setPo,

@@ -20,9 +20,6 @@ import {
   MessageSquare,
   Plus,
   ChevronRight,
-  TrendingUp,
-  Bell,
-  Zap,
   Menu,
   MoreHorizontal,
   User,
@@ -30,7 +27,6 @@ import {
 } from "lucide-react";
 import {
   usePOStore,
-  getMissingFields,
   type NavData,
   type NavLine,
   type POState,
@@ -69,57 +65,6 @@ const EMPTY_NAV_DATA: NavData = {
     livestock_new: [],
   },
 };
-
-const INVENTORY_ITEMS = [
-  {
-    itemName: "Hammer",
-    sku: "SKU-4421",
-    quantity: 8,
-    unit: "units",
-    reorderPoint: 15,
-    vendor: "Bosch",
-  },
-  {
-    itemName: "Safety Gloves",
-    sku: "SKU-1180",
-    quantity: 42,
-    unit: "pairs",
-    reorderPoint: 25,
-    vendor: "SafeWorks",
-  },
-  {
-    itemName: "Layer Feed",
-    sku: "SKU-7602",
-    quantity: 320,
-    unit: "bags",
-    reorderPoint: 150,
-    vendor: "AgriFeeds",
-  },
-] as const;
-
-const PENDING_APPROVALS = [
-  {
-    id: "PO-1048",
-    vendor: "Bosch",
-    amount: "INR 24,500",
-    age: "2 days",
-    owner: "Procurement Manager",
-  },
-  {
-    id: "PO-1051",
-    vendor: "AgriFeeds",
-    amount: "INR 18,900",
-    age: "1 day",
-    owner: "Finance",
-  },
-  {
-    id: "PO-1052",
-    vendor: "Qutoma Farm",
-    amount: "INR 8,750",
-    age: "today",
-    owner: "Operations",
-  },
-] as const;
 
 type VoiceStatus = keyof typeof STATUS_LABELS;
 
@@ -255,12 +200,6 @@ type GoogleGenAIConstructor = new (config: { apiKey: string }) => {
   };
 };
 
-const PO_FIELDS: Array<
-  "vendor" | "item" | "quantity" | "price" | "deliveryDate"
-> = ["vendor", "item", "quantity", "price", "deliveryDate"];
-
-const NUMERIC_FIELDS = new Set(["quantity", "price"]);
-
 function textValue(value: unknown, fallback = "") {
   if (value === null || value === undefined) return fallback;
   return String(value);
@@ -364,105 +303,6 @@ function getDataEntryDetails(result: unknown): NavData | null {
   return null;
 }
 
-function normalizeActionLookup(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function findInventoryItem(query: string) {
-  const lookup = normalizeActionLookup(query);
-  if (!lookup) return null;
-
-  return (
-    INVENTORY_ITEMS.find((item) => {
-      const itemName = normalizeActionLookup(item.itemName);
-      const sku = normalizeActionLookup(item.sku);
-      return (
-        itemName === lookup ||
-        sku === lookup ||
-        itemName.includes(lookup) ||
-        lookup.includes(itemName) ||
-        sku.includes(lookup)
-      );
-    }) ?? null
-  );
-}
-
-function formatStockItem(item: (typeof INVENTORY_ITEMS)[number]) {
-  const status = item.quantity <= item.reorderPoint ? "low" : "healthy";
-  return `${item.itemName} (${item.sku}) has ${item.quantity} ${item.unit}; reorder point ${item.reorderPoint}. Status: ${status}.`;
-}
-
-function buildStockLevelsResponse(itemName: string): ToolCallResponse {
-  const requestedItem = itemName.trim();
-  if (requestedItem) {
-    const item = findInventoryItem(requestedItem);
-    if (!item) {
-      return {
-        success: false,
-        error: `I could not find stock for ${requestedItem}. Current priority: ${formatStockItem(INVENTORY_ITEMS[0])}`,
-      };
-    }
-
-    return {
-      success: true,
-      message: formatStockItem(item),
-    };
-  }
-
-  const lowStock = INVENTORY_ITEMS.filter(
-    (item) => item.quantity <= item.reorderPoint,
-  );
-  const summary = INVENTORY_ITEMS.map(formatStockItem).join(" ");
-  return {
-    success: true,
-    message: lowStock.length
-      ? `Stock summary: ${summary} Replenishment needed for ${lowStock.map((item) => item.itemName).join(", ")}.`
-      : `Stock summary: ${summary} No items are below reorder point.`,
-  };
-}
-
-function buildPendingApprovalsResponse(): ToolCallResponse {
-  const priorityQueue = PENDING_APPROVALS.map(
-    (approval) =>
-      `${approval.id} for ${approval.vendor}, ${approval.amount}, pending ${approval.age}, owner: ${approval.owner}`,
-  ).join("; ");
-
-  return {
-    success: true,
-    message: `There are 7 pending approvals. Priority queue: ${priorityQueue}.`,
-  };
-}
-
-function buildVendorContactResponse(
-  vendorName: string,
-  message: string,
-  channel: string,
-): ToolCallResponse {
-  const vendor = vendorName.trim();
-  if (!vendor) {
-    return {
-      success: false,
-      error:
-        "Which vendor should I contact? Please provide the vendor name and optional message.",
-    };
-  }
-
-  const preferredChannel = ["email", "phone", "whatsapp"].includes(channel)
-    ? channel
-    : "email";
-  const contactMessage =
-    message.trim() || "Please share the latest status update.";
-
-  return {
-    success: true,
-    message: `Vendor contact prepared for ${vendor} via ${preferredChannel}: ${contactMessage}`,
-  };
-}
-
 function getLineSelectionText(line: NavLine) {
   return displayValue(line.iteM_NAME || line.parameteR_NAME);
 }
@@ -478,19 +318,6 @@ function isLineSelectionPrompt(text: string) {
   return /(?:line item|item name|select a line|select an item|which item|choose an item|choose a line|item to update|आइटम चुनें|लाइन चुनें|अपडेट करें|आइटम चुनिए)/i.test(
     text,
   );
-}
-
-function getMissingPOFields(poState: POState) {
-  return PO_FIELDS.filter((field) => !poState[field]?.trim());
-}
-
-function normalizeFieldValue(field: string, value: string) {
-  const normalized = value.trim();
-  if (!normalized) return "";
-  if (!NUMERIC_FIELDS.has(field)) return normalized;
-  const digitsOnly = normalized.replace(/[^\d.]/g, "");
-  if (!digitsOnly || Number.isNaN(Number(digitsOnly))) return "";
-  return digitsOnly;
 }
 
 function formatMessageText(text: string) {
@@ -550,12 +377,6 @@ export default function VoiceBot() {
     savedChats,
     viewingSavedChat,
     hydrated,
-    completedCount,
-    totalFields,
-    updatePOField,
-    startPO,
-    resetPO,
-    confirmPO,
     addMessage,
     appendToStreamingMessage,
     clearMessages,
@@ -868,7 +689,7 @@ export default function VoiceBot() {
   // --- Session Recovery: prompt user if unfinished PO exists ---
   useEffect(() => {
     if (!hydrated) return;
-    if (po.isActive && getMissingFields(po).length > 0 && messages.length > 0) {
+    if (po.isActive && po.activeFlow === 'DATA_ENTRY' && messages.length > 0) {
       setSessionResumePrompt(true);
       return;
     }
@@ -923,33 +744,6 @@ export default function VoiceBot() {
         success: true,
         message: "Data entry flow has started. I have displayed the list of available batches. Please ask the user to select one of the batches to proceed."
       };
-    }
-
-    if (call.name === "check_stock_levels") {
-      const itemName = String(
-        call.args.item_name ?? call.args.item ?? call.args.sku ?? "",
-      );
-      const response = buildStockLevelsResponse(itemName);
-      if (response.success) showToast("Stock levels checked");
-      return response;
-    }
-
-    if (call.name === "review_pending_approvals") {
-      const response = buildPendingApprovalsResponse();
-      showToast("Pending approvals reviewed");
-      return response;
-    }
-
-    if (call.name === "contact_vendor") {
-      const response = buildVendorContactResponse(
-        String(
-          call.args.vendor_name ?? call.args.vendor ?? call.args.supplier ?? "",
-        ),
-        String(call.args.message ?? ""),
-        String(call.args.channel ?? "").toLowerCase(),
-      );
-      if (response.success) showToast("Vendor contact prepared");
-      return response;
     }
 
     // --- NavData Tool Handlers ---
@@ -1580,16 +1374,43 @@ export default function VoiceBot() {
       return false;
     }
 
+    const isExplicitLineSelect = /^\s*(?:i\s+)?(?:select|choose|picked?|use)\s+(?:item|line item|line)?\s+/i.test(message);
     const lineQuery = message
       .replace(/^\s*(?:i\s+)?(?:select|choose|picked?|use)\s+(?:item|line item|line)?\s*/i, "")
       .trim();
+
+    const quantity = getQuantityFromText(message);
+    const isJustNumber = /^-?\d+(?:\.\d+)?$/.test(message.trim());
+
+    // 1. If a line is selected, and they type JUST a number (without explicitly saying "select"), treat as quantity
+    if (!isExplicitLineSelect && isJustNumber && quantity !== null && selectedLineNameRef.current) {
+      const result = await handleAction({
+        name: "update_item_quantity",
+        args: {
+          item_name: selectedLineNameRef.current,
+          quantity,
+        },
+      });
+
+      addMessage({
+        role: "bot",
+        text:
+          result.success === false
+            ? result.error || "I could not update the quantity."
+            : result.message || `Quantity updated to ${quantity}. Do you want to post this data entry?`,
+      });
+      setStatus(result.success === false ? "error" : "idle");
+      return true;
+    }
+
+    // 2. Try to find a line matching the input
     const selectedLine = findNavLine(lineQuery || message);
     if (selectedLine) {
       await handleLocalLineSelection(selectedLine);
       return true;
     }
 
-    const quantity = getQuantityFromText(message);
+    // 3. Fallback: if it has a quantity and a line is selected
     if (quantity !== null && selectedLineNameRef.current) {
       const result = await handleAction({
         name: "update_item_quantity",
@@ -1610,6 +1431,7 @@ export default function VoiceBot() {
       return true;
     }
 
+    // 4. Fallback: if it has a quantity but NO line is selected
     if (quantity !== null && !selectedLineNameRef.current) {
       addMessage({
         role: "bot",
@@ -1632,31 +1454,13 @@ export default function VoiceBot() {
     const messageToSend = draftMessage.trim();
     setInputText("");
 
-    // Detect PO intent and start flow
-    const isPOIntent = /purchase order|create po|new po|order something/i.test(
-      messageToSend,
-    );
-    const isDataEntryIntent = /data entry|batch|nav data|apply data/i.test(
+    // Detect Data Entry intent
+    const isDataEntryIntent = /data entry|batch|nav data|apply data|start data/i.test(
       messageToSend,
     );
     let requestPoData: POState = poRef.current;
 
-    if (isPOIntent && poRef.current.activeFlow !== "PO") {
-      startPO();
-      requestPoData = {
-        ...poRef.current,
-        isActive: true,
-        activeFlow: "PO",
-        navData: null,
-        currentStep: "vendor",
-        vendor: "",
-        item: "",
-        quantity: "",
-        price: "",
-        deliveryDate: "",
-        sessionId: Date.now().toString(),
-      };
-    } else if (isDataEntryIntent && !poRef.current.isActive) {
+    if (isDataEntryIntent && !poRef.current.isActive) {
       startDataEntry(EMPTY_NAV_DATA);
       requestPoData = {
         ...poRef.current,
@@ -1736,14 +1540,6 @@ export default function VoiceBot() {
         }
       }
 
-      // 2. Apply any fields parsed server-side
-      if (data.parsedFields && Object.keys(data.parsedFields).length > 0) {
-        console.log("🏷 [Chat] Applying parsed fields:", data.parsedFields);
-        Object.entries(data.parsedFields).forEach(([field, value]) => {
-          updatePOField(field as keyof typeof poRef.current, value as string);
-        });
-      }
-
       addMessage({
         role: "bot",
         text: data.text || "I could not process that request.",
@@ -1805,38 +1601,8 @@ export default function VoiceBot() {
     await handleLocalLineSelection(line);
   };
 
-  const getInsights = () => [
-    {
-      icon: TrendingUp,
-      label: "PO Volume",
-      value: "↑ 12% this week",
-      color: "text-emerald-500",
-    },
-    {
-      icon: ClipboardList,
-      label: "Open Orders",
-      value: "7 pending approval",
-      color: "text-amber-500",
-    },
-    {
-      icon: CheckCircle2,
-      label: "Completed",
-      value: "23 this month",
-      color: "text-blue-500",
-    },
-  ];
-
-  const getAlerts = () => [
-    { text: "Bosch delivery overdue by 2 days", urgent: true },
-    { text: "Stock low: Hammer SKU-4421", urgent: true },
-    { text: "New vendor quote received", urgent: false },
-  ];
-
   const getActions = () => [
     "Start Data Entry",
-    "Check Stock Levels",
-    "Review Approvals",
-    "Contact Vendor",
   ];
 
   return (
@@ -1888,10 +1654,10 @@ export default function VoiceBot() {
               />
               <div className="min-w-0">
                 <p className="font-bold text-sm leading-none text-zinc-900 dark:text-zinc-100 truncate">
-                  Prudence ERP
+                  NavFarm ERP
                 </p>
                 <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">
-                  AI Assistant
+                  AI Data Entry Assistant
                 </p>
               </div>
             </div>
@@ -1900,9 +1666,18 @@ export default function VoiceBot() {
             <div className="p-3">
               <button
                 onClick={() => {
+                  disconnect(true);
+                  setBatchGroups([]);
+                  setSelectedLineName("");
+                  selectedLineNameRef.current = "";
+                  setDetailsError(null);
+                  setBatchesError(null);
                   setInputText("");
                   setError(null);
                   setStatus("idle");
+                  setIsSpeaking(false);
+                  setIsMuted(false);
+                  isMutedRef.current = false;
                   setSessionResumePrompt(false);
                   stopAllAudio();
                   startNewChat();
@@ -1995,7 +1770,7 @@ export default function VoiceBot() {
           {/* Center: Assistant Name + Status */}
           <div className="flex flex-col items-center">
             <h1 className="font-bold text-base leading-tight text-zinc-900 dark:text-zinc-100">
-              AI Agent
+              NavFarm AI
             </h1>
             <div className="flex items-center gap-1.5">
               <div
@@ -2185,6 +1960,25 @@ export default function VoiceBot() {
               </div>
             )}
 
+            {/* Data Entry Step Indicator */}
+            {po.activeFlow === "DATA_ENTRY" && !viewingSavedChat && (
+              <div className="mx-4 mt-3 px-4 py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 flex items-center gap-3">
+                <ClipboardList size={16} className="text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                    Data Entry:
+                  </span>
+                  <span className="text-xs text-emerald-600 dark:text-emerald-400 truncate">
+                    {po.navData?.data?.header?.[0]?.batcH_NO
+                      ? `Batch ${po.navData.data.header[0].batcH_NO}`
+                      : "Select a batch"}
+                    {selectedLineName &&
+                      ` → ${selectedLineName}`}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Messages */}
             <div className="flex-1 overflow-y-auto px-4 md:px-8 lg:px-16 py-6 space-y-6 scroll-smooth scrollbar-hide">
               {messages.length === 0 && (
@@ -2193,11 +1987,10 @@ export default function VoiceBot() {
                     <Bot size={28} className="text-white" />
                   </div>
                   <h3 className="text-xl md:text-2xl font-bold mb-3 text-zinc-800 dark:text-zinc-100">
-                    How can I help you today?
+                    NavFarm AI Assistant
                   </h3>
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 leading-relaxed px-4">
-                    Create purchase orders, check inventory, manage vendors, or
-                    ask anything ERP-related.
+                    I can help you with NavFarm data entry — selecting batches, updating line items with quantities, and posting your data entries.
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-8 w-full">
                     {getActions().map((action) => (
@@ -2486,12 +2279,12 @@ export default function VoiceBot() {
                 </button>
               </div>
               <p className="text-[10px] text-center text-zinc-300 dark:text-zinc-600 mt-2">
-                Prudence ERP AI · Powered by GPT-4o + Gemini Live
+                NavFarm AI · Powered by Prudence Tech
               </p>
             </footer>
           </main>
 
-          {/* ── RIGHT PANEL: Insights ── */}
+          {/* ── RIGHT PANEL: Data Entry ── */}
           <AnimatePresence initial={false}>
             {rightPanelOpen && (
               <motion.aside
@@ -2506,88 +2299,14 @@ export default function VoiceBot() {
               >
                 <div className="p-4 border-b border-zinc-200 dark:border-zinc-800">
                   <h2 className="font-bold text-sm text-zinc-800 dark:text-zinc-100">
-                    ERP Insights
+                    NavFarm Data Entry
                   </h2>
                   <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">
-                    Live data · Updated now
+                    Batch & line items
                   </p>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-hide">
-                  {/* Insights */}
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600 px-1 mb-2 flex items-center gap-1">
-                      <TrendingUp size={10} /> Insights
-                    </p>
-                    {getInsights().map((item) => (
-                      <div
-                        key={item.label}
-                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 mb-1.5"
-                      >
-                        <item.icon size={16} className={item.color} />
-                        <div>
-                          <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
-                            {item.label}
-                          </p>
-                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                            {item.value}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Alerts */}
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600 px-1 mb-2 flex items-center gap-1">
-                      <Bell size={10} /> Alerts
-                    </p>
-                    {getAlerts().map((alert, i) => (
-                      <div
-                        key={i}
-                        className={`flex items-start gap-2 px-3 py-2.5 rounded-xl mb-1.5 ${alert.urgent
-                          ? "bg-rose-50 dark:bg-rose-900/20"
-                          : "bg-zinc-50 dark:bg-zinc-800"
-                          }`}
-                      >
-                        <div
-                          className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${alert.urgent ? "bg-rose-500" : "bg-zinc-400"
-                            }`}
-                        />
-                        <p
-                          className={`text-[12px] leading-snug ${alert.urgent
-                            ? "text-rose-700 dark:text-rose-400 font-medium"
-                            : "text-zinc-500 dark:text-zinc-400"
-                            }`}
-                        >
-                          {alert.text}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Recommended Actions */}
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 dark:text-zinc-600 px-1 mb-2 flex items-center gap-1">
-                      <Zap size={10} /> Recommended Actions
-                    </p>
-                    {getActions().map((action) => (
-                      <button
-                        key={action}
-                        onClick={() => void handleSendMessage(action)}
-                        className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:border-emerald-300 border border-transparent transition-all mb-1.5 text-left group"
-                      >
-                        <span className="text-[12px] font-medium text-zinc-600 dark:text-zinc-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
-                          {action}
-                        </span>
-                        <ChevronRight
-                          size={13}
-                          className="text-zinc-300 dark:text-zinc-600 group-hover:text-emerald-400"
-                        />
-                      </button>
-                    ))}
-                  </div>
-
                   {/* Data Entry Items Card */}
                   {po.activeFlow === "DATA_ENTRY" && (
                     <div className="mt-2">
