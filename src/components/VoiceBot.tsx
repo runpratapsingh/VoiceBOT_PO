@@ -1382,66 +1382,69 @@ export default function VoiceBot() {
     const quantity = getQuantityFromText(message);
     const isJustNumber = /^-?\d+(?:\.\d+)?$/.test(message.trim());
 
-    // 1. If a line is selected, and they type JUST a number (without explicitly saying "select"), treat as quantity
-    if (!isExplicitLineSelect && isJustNumber && quantity !== null && selectedLineNameRef.current) {
-      const result = await handleAction({
-        name: "update_item_quantity",
-        args: {
-          item_name: selectedLineNameRef.current,
-          quantity,
-        },
-      });
+  // 1. If a line is selected and they type just a number (quantity only)
+  if (!isExplicitLineSelect && isJustNumber && quantity !== null && selectedLineNameRef.current) {
+    const result = await handleAction({
+      name: "update_item_quantity",
+      args: { item_name: selectedLineNameRef.current, quantity },
+    });
+    addMessage({
+      role: "bot",
+      text: result.success === false
+        ? result.error || "I could not update the quantity."
+        : result.message || `Quantity updated to ${quantity}. Do you want to post this data entry?`,
+    });
+    setStatus(result.success === false ? "error" : "idle");
+    return true;
+  }
 
+  // 2. Explicit line selection
+  if (isExplicitLineSelect) {
+    const line = findNavLine(lineQuery);
+    if (line) {
+      await handleLocalLineSelection(line);
+      return true;
+    } else {
       addMessage({
         role: "bot",
-        text:
-          result.success === false
-            ? result.error || "I could not update the quantity."
-            : result.message || `Quantity updated to ${quantity}. Do you want to post this data entry?`,
-      });
-      setStatus(result.success === false ? "error" : "idle");
-      return true;
-    }
-
-    // 2. Try to find a line matching the input
-    const selectedLine = findNavLine(lineQuery || message);
-    if (selectedLine) {
-      await handleLocalLineSelection(selectedLine);
-      return true;
-    }
-
-    // 3. Fallback: if it has a quantity and a line is selected
-    if (quantity !== null && selectedLineNameRef.current) {
-      const result = await handleAction({
-        name: "update_item_quantity",
-        args: {
-          item_name: selectedLineNameRef.current,
-          quantity,
-        },
-      });
-
-      addMessage({
-        role: "bot",
-        text:
-          result.success === false
-            ? result.error || "I could not update the quantity."
-            : result.message || `Quantity updated to ${quantity}. Do you want to post this data entry?`,
-      });
-      setStatus(result.success === false ? "error" : "idle");
-      return true;
-    }
-
-    // 4. Fallback: if it has a quantity but NO line is selected
-    if (quantity !== null && !selectedLineNameRef.current) {
-      addMessage({
-        role: "bot",
-        text: "Please select a line item first, then provide Total Units.",
+        text: `Line item "${lineQuery}" not found. Please try again.`,
       });
       setStatus("idle");
       return true;
     }
+  }
 
-    return false;
+  // 3. Message contains both line name and quantity
+  if (quantity !== null && lineQuery) {
+    const line = findNavLine(lineQuery);
+    if (line) {
+      const lineName = getLineSelectionText(line);
+      const result = await handleAction({
+        name: "update_item_quantity",
+        args: { item_name: lineName, quantity },
+      });
+      addMessage({
+        role: "bot",
+        text: result.success === false
+          ? result.error || "I could not update the quantity."
+          : result.message || `Quantity for ${lineName} updated to ${quantity}. Do you want to post this data entry?`,
+      });
+      setStatus(result.success === false ? "error" : "idle");
+      return true;
+    }
+  }
+
+  // 4. Quantity provided but no line selected yet
+  if (quantity !== null && !selectedLineNameRef.current) {
+    addMessage({
+      role: "bot",
+      text: "Please select a line item first, then provide Total Units.",
+    });
+    setStatus("idle");
+    return true;
+  }
+
+  return false;
   };
 
   const handleSendMessage = async (messageOverride?: string) => {
