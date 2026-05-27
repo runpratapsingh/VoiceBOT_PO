@@ -6,6 +6,7 @@ import type {
   ChatCompletionTool,
 } from 'openai/resources/chat/completions';
 import { PO_TOOLS, SYSTEM_INSTRUCTION } from '@/services/aiConfig';
+import { loadAndAnalyzeBatch } from '@/services/navfarmAnalytics';
 
 export const runtime = 'nodejs';
 
@@ -483,6 +484,104 @@ export async function POST(req: Request) {
   try {
     const { message, poData, history = [] } = await req.json() as ChatRequestBody;
     const recentHistory = history.slice(-20);
+
+    // Detect if this is an analytics query (Hindi, Hinglish, or English)
+    const isAnalyticsQuery = /mortality|feed|consumed|trend|temp|temperature|humidity|output|production|piglet|expense|cost|vaccin|medicine|running\s*cost|aaj|kal|yesterday|today|performance|kpi|cumulative/i.test(message);
+
+    if (isAnalyticsQuery) {
+      console.log('[Chat API] Analytics query detected:', message);
+
+      // Extract batch ID
+      let batchId = 'B00010'; // default
+      const batchMatch = message.match(/\bB\d{5}\b/i) || message.match(/\bbatch\s*(\d+|B\d+)/i) || message.match(/\bB\d+\b/i);
+      if (batchMatch) {
+        const rawMatch = batchMatch[1] || batchMatch[0];
+        batchId = rawMatch.toUpperCase();
+        if (/^\d+$/.test(batchId)) {
+          batchId = 'B' + batchId.padStart(5, '0');
+        }
+      } else if (poData?.navData?.data?.header?.[0]?.batcH_NO) {
+        batchId = String(poData.navData.data.header[0].batcH_NO);
+      }
+
+      const { dateFilter, analysis } = loadAndAnalyzeBatch(batchId, message);
+
+      if (!analysis) {
+        return NextResponse.json({
+          text: "No data available for requested metric.",
+          toolCalls: []
+        });
+      }
+
+      // We have data! Let's construct a prompt for OpenAI to generate the natural language text
+      const openAIKey = process.env.OPENAI_API_KEY;
+      if (!openAIKey) {
+        throw new Error('OpenAI API key not configured. Set OPENAI_API_KEY on the server.');
+      }
+
+      const client = new OpenAI({ apiKey: openAIKey });
+
+      // Determine current data entry step if active to append the reminder
+      let dataEntryGuidance = '';
+      if (poData?.activeFlow === 'DATA_ENTRY') {
+        const currentStep = getDataEntryStep(poData);
+        const batchNo = getBatchNo(poData);
+        switch (currentStep) {
+          case 'awaiting_batch':
+            dataEntryGuidance = 'Now, back to our data entry — please select a batch from the list below to proceed.';
+            break;
+          case 'awaiting_item_selection':
+            dataEntryGuidance = `Now, back to our data entry for batch ${batchNo} — please select a line item from the list below to update.`;
+            break;
+          case 'ready_to_post':
+            dataEntryGuidance = `Now, back to our data entry for batch ${batchNo} — do you want to post the data entry or update more items?`;
+            break;
+          default:
+            dataEntryGuidance = 'Now, back to our data entry flow.';
+        }
+      }
+
+      const analyticsSystemPrompt = `You are "NavFarm AI", an enterprise-grade agriculture, livestock, and poultry assistant.
+Your role is to help farmers, supervisors, and managers interact with farm batch data using natural language through voice and chat.
+You must work as a structured analytics assistant.
+
+Here is the exact calculated analytics data for batch ${batchId}:
+${JSON.stringify(analysis, null, 2)}
+
+Strict Response Rules:
+1. Never hallucinate. Never assume missing data.
+2. Keep responses concise and highly operational (e.g. "Batch B00010 total mortality today is 16 animals. Current mortality rate is 39%. Feed consumed today is 890 KG.")
+3. Never expose raw API JSON fields. Summarize them in clean natural language.
+4. Support multilingual input: If the user asked in Hindi, Hinglish, or English, reply in the same style/language (English, Hindi, or Hinglish).
+5. Speak in natural conversational tones suitable for voice synthesis.
+6. If there is an active data entry flow, you MUST answer the question first, then add the reminder guidance verbatim at the very end of your response.
+
+${dataEntryGuidance ? `Reminder Guidance to add at the end: "${dataEntryGuidance}"` : ''}`;
+
+      console.log('[Chat API] Dispatching analytics request to OpenAI...');
+      const completion = await client.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        messages: [
+          { role: 'developer', content: analyticsSystemPrompt },
+          ...recentHistory.map(msg => ({
+            role: msg.role === 'user' ? 'user' as const : 'assistant' as const,
+            content: msg.text
+          })),
+          { role: 'user', content: message }
+        ],
+        temperature: 0.2,
+      });
+
+      const rawBotText = completion.choices[0]?.message?.content ?? '';
+      const normalizedText = normalizeAssistantText(rawBotText || "I have performed the analysis.");
+
+      return NextResponse.json({
+        text: normalizedText,
+        toolCalls: [],
+        analytics: analysis
+      });
+    }
+
     const systemPrompt = buildSystemPrompt(poData);
     const openAIMessages = buildOpenAIMessages(systemPrompt, recentHistory, message);
 

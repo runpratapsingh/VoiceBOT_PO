@@ -244,30 +244,34 @@ function getBatchSummaryGroups(payload: unknown): BatchSummaryGroup[] {
 
   if (!Array.isArray(rawGroups)) return [];
 
-  return rawGroups.map((group) => {
-    const record = group as Record<string, unknown>;
-    const rawBatches = Array.isArray(record.batches) ? record.batches : [];
+  return rawGroups
+    .map((group) => {
+      const record = group as Record<string, unknown>;
+      const rawBatches = Array.isArray(record.batches) ? record.batches : [];
 
-    return {
-      nob_id: textValue(record.nob_id),
-      nature_of_business: textValue(record.nature_of_business),
-      line_of_business: textValue(record.line_of_business, "Other"),
-      lob_id: textValue(record.lob_id),
-      batches: rawBatches.map((batch) => {
-        const batchRecord = batch as Record<string, unknown>;
-        return {
-          batch_id: intValue(batchRecord.batch_id),
-          batch_no: textValue(batchRecord.batch_no),
-          start_date: textValue(batchRecord.start_date),
-          opening_stocks: intValue(batchRecord.opening_stocks),
-          remaining_stocks: intValue(batchRecord.remaining_stocks),
-          last_entry_date: textValue(batchRecord.last_entry_date),
-          remark: textValue(batchRecord.remark),
-          status: textValue(batchRecord.status),
-        };
-      }).filter((batch) => batch.batch_id || batch.batch_no),
-    };
-  }).filter((group) => group.batches.length > 0);
+      return {
+        nob_id: textValue(record.nob_id),
+        nature_of_business: textValue(record.nature_of_business),
+        line_of_business: textValue(record.line_of_business, "Other"),
+        lob_id: textValue(record.lob_id),
+        batches: rawBatches
+          .map((batch) => {
+            const batchRecord = batch as Record<string, unknown>;
+            return {
+              batch_id: intValue(batchRecord.batch_id),
+              batch_no: textValue(batchRecord.batch_no),
+              start_date: textValue(batchRecord.start_date),
+              opening_stocks: intValue(batchRecord.opening_stocks),
+              remaining_stocks: intValue(batchRecord.remaining_stocks),
+              last_entry_date: textValue(batchRecord.last_entry_date),
+              remark: textValue(batchRecord.remark),
+              status: textValue(batchRecord.status),
+            };
+          })
+          .filter((batch) => batch.batch_id || batch.batch_no),
+      };
+    })
+    .filter((group) => group.batches.length > 0);
 }
 
 function findBatchSummary(
@@ -337,7 +341,8 @@ function getLiveConnection(session: LiveSessionWithConnection): LiveConnection {
 
 function getLiveSendTarget(session: LiveSessionWithConnection) {
   const conn = getLiveConnection(session);
-  const send = session.send || session.sendMessage || conn.send || conn.sendMessage;
+  const send =
+    session.send || session.sendMessage || conn.send || conn.sendMessage;
   return {
     conn,
     target: session.send || session.sendMessage ? session : conn,
@@ -540,10 +545,13 @@ export default function VoiceBot() {
 
     try {
       const params = new URLSearchParams(DEFAULT_BATCH_SUMMARY_REQUEST);
-      const res = await fetch(`/api/navfarm/get-dataentry-summary?${params.toString()}`, {
-        method: "GET",
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/navfarm/get-dataentry-summary?${params.toString()}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        },
+      );
       const result = await res.json();
       const response = result as {
         success?: boolean;
@@ -554,8 +562,8 @@ export default function VoiceBot() {
       if (!res.ok || response.success === false) {
         throw new Error(
           response.error ||
-          response.message ||
-          "NavFarm batch summary fetch failed.",
+            response.message ||
+            "NavFarm batch summary fetch failed.",
         );
       }
 
@@ -572,67 +580,84 @@ export default function VoiceBot() {
     }
   }, []);
 
-  const fetchDataEntryDetails = useCallback(async (batchId: number | string) => {
-    setIsDetailsLoading(true);
-    setDetailsError(null);
+  const fetchDataEntryDetails = useCallback(
+    async (batchId: number | string) => {
+      setIsDetailsLoading(true);
+      setDetailsError(null);
 
-    try {
-      const params = new URLSearchParams({
-        Company_Id: DEFAULT_BATCH_SUMMARY_REQUEST.Company_Id,
-        batch_id: String(batchId),
-      });
-      console.log("[NavFarm Data Entry] Fetching dynamic line items", {
-        endpoint: "/api/navfarm/get-dataentry-details",
-        params: Object.fromEntries(params.entries()),
-      });
-      const res = await fetch(`/api/navfarm/get-dataentry-details?${params.toString()}`, {
-        method: "GET",
-        cache: "no-store",
-      });
-      const result = await res.json();
-      const response = result as {
-        success?: boolean;
-        error?: string;
-        message?: string;
-      };
-
-      if (!res.ok || response.success === false) {
-        throw new Error(
-          response.error ||
-          response.message ||
-          "NavFarm data entry details fetch failed.",
+      try {
+        const params = new URLSearchParams({
+          Company_Id: DEFAULT_BATCH_SUMMARY_REQUEST.Company_Id,
+          batch_id: String(batchId),
+        });
+        console.log("[NavFarm Data Entry] Fetching dynamic line items", {
+          endpoint: "/api/navfarm/get-dataentry-details",
+          params: Object.fromEntries(params.entries()),
+        });
+        const res = await fetch(
+          `/api/navfarm/get-dataentry-details?${params.toString()}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          },
         );
-      }
+        const result = await res.json();
+        const response = result as {
+          success?: boolean;
+          error?: string;
+          message?: string;
+        };
 
-      const details = getDataEntryDetails(result);
-      if (!details) {
-        console.error("[NavFarm Data Entry] Invalid details response shape", result);
-        throw new Error("NavFarm did not return data entry details for this batch.");
-      }
+        if (!res.ok || response.success === false) {
+          throw new Error(
+            response.error ||
+              response.message ||
+              "NavFarm data entry details fetch failed.",
+          );
+        }
 
-      console.log("[NavFarm Data Entry] Dynamic details response", {
-        batchId,
-        status: details.status,
-        message: details.message,
-        batchNo: details.data?.header?.[0]?.batcH_NO,
-        lineCount: details.data?.line?.length ?? 0,
-        firstLine: details.data?.line?.[0]?.iteM_NAME || details.data?.line?.[0]?.parameteR_NAME || null,
-        raw: details,
-      });
-      return details;
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to fetch batch details.";
-      console.error("[NavFarm Data Entry] Failed to fetch dynamic line items", {
-        batchId,
-        error: message,
-      });
-      setDetailsError(message);
-      throw err;
-    } finally {
-      setIsDetailsLoading(false);
-    }
-  }, []);
+        const details = getDataEntryDetails(result);
+        if (!details) {
+          console.error(
+            "[NavFarm Data Entry] Invalid details response shape",
+            result,
+          );
+          throw new Error(
+            "NavFarm did not return data entry details for this batch.",
+          );
+        }
+
+        console.log("[NavFarm Data Entry] Dynamic details response", {
+          batchId,
+          status: details.status,
+          message: details.message,
+          batchNo: details.data?.header?.[0]?.batcH_NO,
+          lineCount: details.data?.line?.length ?? 0,
+          firstLine:
+            details.data?.line?.[0]?.iteM_NAME ||
+            details.data?.line?.[0]?.parameteR_NAME ||
+            null,
+          raw: details,
+        });
+        return details;
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to fetch batch details.";
+        console.error(
+          "[NavFarm Data Entry] Failed to fetch dynamic line items",
+          {
+            batchId,
+            error: message,
+          },
+        );
+        setDetailsError(message);
+        throw err;
+      } finally {
+        setIsDetailsLoading(false);
+      }
+    },
+    [],
+  );
 
   // --- Audio Utilities ---
   const encodePcm = (float32Array: Float32Array) => {
@@ -663,7 +688,7 @@ export default function VoiceBot() {
     activeSourcesRef.current.forEach((source) => {
       try {
         source.stop();
-      } catch { }
+      } catch {}
     });
     activeSourcesRef.current.clear();
     nextStartTimeRef.current = 0;
@@ -689,7 +714,7 @@ export default function VoiceBot() {
   // --- Session Recovery: prompt user if unfinished PO exists ---
   useEffect(() => {
     if (!hydrated) return;
-    if (po.isActive && po.activeFlow === 'DATA_ENTRY' && messages.length > 0) {
+    if (po.isActive && po.activeFlow === "DATA_ENTRY" && messages.length > 0) {
       setSessionResumePrompt(true);
       return;
     }
@@ -732,8 +757,6 @@ export default function VoiceBot() {
     );
   }, []);
 
-
-
   const handleAction = async (
     call: ToolCallRequest,
   ): Promise<ToolCallResponse> => {
@@ -742,7 +765,8 @@ export default function VoiceBot() {
       void loadBatchSummary();
       return {
         success: true,
-        message: "Data entry flow has started. I have displayed the list of available batches. Please ask the user to select one of the batches to proceed."
+        message:
+          "Data entry flow has started. I have displayed the list of available batches. Please ask the user to select one of the batches to proceed.",
       };
     }
 
@@ -753,7 +777,10 @@ export default function VoiceBot() {
         call.args.batch_id ?? call.args.batch_no ?? "",
       ).trim();
       if (!selectedBatchValue) {
-        return { success: false, error: "Batch id or batch number is required." };
+        return {
+          success: false,
+          error: "Batch id or batch number is required.",
+        };
       }
 
       const currentBatchNo = textValue(
@@ -766,14 +793,18 @@ export default function VoiceBot() {
         currentBatchNo &&
         currentLines.length > 0 &&
         (quantityFromBatchTool !== null ||
-          normalizeBatchLookup(selectedBatchValue) === normalizeBatchLookup(currentBatchNo))
+          normalizeBatchLookup(selectedBatchValue) ===
+            normalizeBatchLookup(currentBatchNo))
       ) {
         if (quantityFromBatchTool !== null && selectedLineNameRef.current) {
-          console.warn("[NavFarm Data Entry] Voice sent quantity as batch. Routing to update_item_quantity.", {
-            currentBatchNo,
-            selectedLine: selectedLineNameRef.current,
-            quantity: quantityFromBatchTool,
-          });
+          console.warn(
+            "[NavFarm Data Entry] Voice sent quantity as batch. Routing to update_item_quantity.",
+            {
+              currentBatchNo,
+              selectedLine: selectedLineNameRef.current,
+              quantity: quantityFromBatchTool,
+            },
+          );
           return handleAction({
             name: "update_item_quantity",
             args: {
@@ -791,10 +822,12 @@ export default function VoiceBot() {
         };
       }
 
-      const groups = batchGroups.length > 0 ? batchGroups : await loadBatchSummary();
+      const groups =
+        batchGroups.length > 0 ? batchGroups : await loadBatchSummary();
       const selectedBatch = findBatchSummary(groups, selectedBatchValue);
       const batchIdForDetails =
-        selectedBatch?.batch_id || (/^\d+$/.test(selectedBatchValue) ? selectedBatchValue : "");
+        selectedBatch?.batch_id ||
+        (/^\d+$/.test(selectedBatchValue) ? selectedBatchValue : "");
 
       console.log("[NavFarm Data Entry] Resolved selected batch", {
         selectedBatchValue,
@@ -847,7 +880,7 @@ export default function VoiceBot() {
         setSelectedLineName(resolvedItemName);
         return {
           success: true,
-          message: `Item ${resolvedItemName} selected. Please provide Total Units.`
+          message: `Item ${resolvedItemName} selected. Please provide Total Units.`,
         };
       }
       return {
@@ -890,7 +923,7 @@ export default function VoiceBot() {
       showToast(`${resolvedItemName} quantity updated to ${quantity}`);
       return {
         success: true,
-        message: `Quantity for ${resolvedItemName} has been updated to ${quantity}. Do you want to post this data entry?`
+        message: `Quantity for ${resolvedItemName} has been updated to ${quantity}. Do you want to post this data entry?`,
       };
     }
 
@@ -919,8 +952,13 @@ export default function VoiceBot() {
       const activeFlow = poRef.current.activeFlow;
       const navData = poRef.current.navData;
       const batchNo = navData?.data?.header?.[0]?.batcH_NO || "None";
-      const linesWithQty = navData?.data?.line.filter((line) => Number(line.actuaL_VALUE) > 0) || [];
-      const currentItem = linesWithQty.length > 0 ? linesWithQty[linesWithQty.length - 1].iteM_NAME : "None";
+      const linesWithQty =
+        navData?.data?.line.filter((line) => Number(line.actuaL_VALUE) > 0) ||
+        [];
+      const currentItem =
+        linesWithQty.length > 0
+          ? linesWithQty[linesWithQty.length - 1].iteM_NAME
+          : "None";
 
       return {
         success: true,
@@ -928,9 +966,12 @@ export default function VoiceBot() {
           active_flow: activeFlow,
           current_batch: batchNo,
           last_updated_item: currentItem,
-          items_with_quantity: linesWithQty.map((line) => ({ name: line.iteM_NAME, qty: line.actuaL_VALUE }))
+          items_with_quantity: linesWithQty.map((line) => ({
+            name: line.iteM_NAME,
+            qty: line.actuaL_VALUE,
+          })),
         },
-        message: `The current active batch is ${batchNo}. ${currentItem !== "None" ? `The last item updated was ${currentItem}.` : "No items have been updated yet."}`
+        message: `The current active batch is ${batchNo}. ${currentItem !== "None" ? `The last item updated was ${currentItem}.` : "No items have been updated yet."}`,
       };
     }
 
@@ -939,8 +980,6 @@ export default function VoiceBot() {
       if (!navData || !navData.data) {
         return { success: false, error: "No data entry session active." };
       }
-
-
 
       const h = navData.data.header[0] || {};
 
@@ -973,6 +1012,22 @@ export default function VoiceBot() {
         REMARK: textValue(h.remark),
       };
 
+      const livestockData = navData.data.line
+        .filter((item) => item.inventorY_TYPE === "FA")
+        .flatMap((item) =>
+          item.livestock.map((live) => ({
+            livestock_No: live.livestock_No,
+            parameter_id: live.parameter_id,
+            item_id: live.item_id,
+            stage: live.stage,
+          })),
+        );
+
+      console.log(
+        livestockData,
+        "livestockDatalivestockDatalivestockDatalivestockDatalivestockData",
+      );
+
       const lines = navData.data.line.map((item: NavLine) => ({
         PARAMETER_TYPE: textValue(item.parameteR_TYPE),
         PARAMETER_TYPE_ID: intValue(item.parameteR_TYPE_ID),
@@ -999,6 +1054,7 @@ export default function VoiceBot() {
         header,
         lines,
         livestock: [],
+        livestock_tree: livestockData,
       };
 
       console.log("🚀 FINAL MAPPED DATA ENTRY:", updatedData);
@@ -1067,7 +1123,7 @@ export default function VoiceBot() {
       if (closeSession && sessionRef.current) {
         try {
           sessionRef.current.close();
-        } catch { }
+        } catch {}
       }
 
       sessionRef.current = null;
@@ -1166,7 +1222,7 @@ export default function VoiceBot() {
                   sessionRef.current.sendRealtimeInput?.({
                     media: { data: pcmData, mimeType: "audio/pcm;rate=16000" },
                   });
-                } catch { }
+                } catch {}
               }
             };
             source.connect(scriptProcessor);
@@ -1195,7 +1251,10 @@ export default function VoiceBot() {
                 );
               if (text && !isToolCallLeak) {
                 // Remove internal thinking markers if model outputs them
-                const cleanText = text.replace(/^(?:thought|thinking|ok|sure|alright)[,.\s]*/i, "");
+                const cleanText = text.replace(
+                  /^(?:thought|thinking|ok|sure|alright)[,.\s]*/i,
+                  "",
+                );
                 if (cleanText) {
                   appendToStreamingMessage("bot", cleanText);
                   setStatus("speaking");
@@ -1221,13 +1280,18 @@ export default function VoiceBot() {
 
                 console.log("🎙️ WS STATE:", conn.readyState);
                 if (isLiveConnectionClosed(conn)) {
-                  console.warn("⚠️ [Voice] Connection is closing/closed. Skipping send.");
+                  console.warn(
+                    "⚠️ [Voice] Connection is closing/closed. Skipping send.",
+                  );
                   return;
                 }
 
                 if (typeof session.sendToolResponse === "function") {
                   try {
-                    console.log("🎙️ [Voice] Sending SDK tool response:", functionResponses);
+                    console.log(
+                      "🎙️ [Voice] Sending SDK tool response:",
+                      functionResponses,
+                    );
                     await session.sendToolResponse({ functionResponses });
                     if (isConnectedRef.current) setStatus("listening");
                   } catch (err) {
@@ -1236,11 +1300,17 @@ export default function VoiceBot() {
                 } else if (typeof send === "function") {
                   const payload = { toolResponse: { functionResponses } };
                   try {
-                    console.log("🎙️ [Voice] Sending fallback tool response:", payload);
+                    console.log(
+                      "🎙️ [Voice] Sending fallback tool response:",
+                      payload,
+                    );
                     send.call(target, payload);
                     if (isConnectedRef.current) setStatus("listening");
                   } catch (err) {
-                    console.error("❌ [Voice] Fallback tool response error:", err);
+                    console.error(
+                      "❌ [Voice] Fallback tool response error:",
+                      err,
+                    );
                   }
                 }
               }
@@ -1305,48 +1375,57 @@ export default function VoiceBot() {
    * Helper to send voice intents properly without breaking the audio session.
    * Treats UI interaction as conversational voice input.
    */
-  const sendVoiceIntent = useCallback((text: string) => {
-    if (!sessionRef.current || !isConnected) return;
+  const sendVoiceIntent = useCallback(
+    (text: string) => {
+      if (!sessionRef.current || !isConnected) return;
 
-    try {
-      const session = sessionRef.current as LiveSessionWithConnection;
-      const { conn, send, target } = getLiveSendTarget(session);
+      try {
+        const session = sessionRef.current as LiveSessionWithConnection;
+        const { conn, send, target } = getLiveSendTarget(session);
 
-      if (isLiveConnectionClosed(conn)) {
-        console.warn("⚠️ [Voice] WS is closing/closed (state:", conn.readyState, "). Reconnecting...");
-        disconnect(true);
-        setTimeout(() => connect(), 500);
-        return;
+        if (isLiveConnectionClosed(conn)) {
+          console.warn(
+            "⚠️ [Voice] WS is closing/closed (state:",
+            conn.readyState,
+            "). Reconnecting...",
+          );
+          disconnect(true);
+          setTimeout(() => connect(), 500);
+          return;
+        }
+
+        const turns = [
+          {
+            role: "user" as const,
+            parts: [{ text }],
+          },
+        ];
+
+        if (typeof session.sendClientContent === "function") {
+          console.log("🎙️ [Voice] Sending voice intent:", text);
+          void Promise.resolve(
+            session.sendClientContent({
+              turns,
+              turnComplete: true,
+            }),
+          ).catch((err) => {
+            console.error("❌ [Voice] SDK client content error:", err);
+          });
+        } else if (typeof send === "function") {
+          console.log("🎙️ [Voice] Sending fallback voice intent:", text);
+          send.call(target, {
+            clientContent: {
+              turns,
+              turnComplete: true,
+            },
+          });
+        }
+      } catch (err) {
+        console.error("❌ [Voice] Failed to send voice intent:", err);
       }
-
-      const turns = [{
-        role: "user" as const,
-        parts: [{ text }]
-      }];
-
-      if (typeof session.sendClientContent === "function") {
-        console.log("🎙️ [Voice] Sending voice intent:", text);
-        void Promise.resolve(
-          session.sendClientContent({
-            turns,
-            turnComplete: true
-          }),
-        ).catch((err) => {
-          console.error("❌ [Voice] SDK client content error:", err);
-        });
-      } else if (typeof send === "function") {
-        console.log("🎙️ [Voice] Sending fallback voice intent:", text);
-        send.call(target, {
-          clientContent: {
-            turns,
-            turnComplete: true
-          }
-        });
-      }
-    } catch (err) {
-      console.error("❌ [Voice] Failed to send voice intent:", err);
-    }
-  }, [isConnected]);
+    },
+    [isConnected],
+  );
 
   const handleLocalLineSelection = async (line: NavLine) => {
     const lineName = getLineSelectionText(line);
@@ -1360,7 +1439,8 @@ export default function VoiceBot() {
       text:
         result.success === false
           ? result.error || `Item ${lineName} was not found.`
-          : result.message || `Item ${lineName} selected. Please provide Total Units.`,
+          : result.message ||
+            `Item ${lineName} selected. Please provide Total Units.`,
     });
     setStatus(result.success === false ? "error" : "idle");
   };
@@ -1374,77 +1454,92 @@ export default function VoiceBot() {
       return false;
     }
 
-    const isExplicitLineSelect = /^\s*(?:i\s+)?(?:select|choose|picked?|use)\s+(?:item|line item|line)?\s+/i.test(message);
+    const isExplicitLineSelect =
+      /^\s*(?:i\s+)?(?:select|choose|picked?|use)\s+(?:item|line item|line)?\s+/i.test(
+        message,
+      );
     const lineQuery = message
-      .replace(/^\s*(?:i\s+)?(?:select|choose|picked?|use)\s+(?:item|line item|line)?\s*/i, "")
+      .replace(
+        /^\s*(?:i\s+)?(?:select|choose|picked?|use)\s+(?:item|line item|line)?\s*/i,
+        "",
+      )
       .trim();
 
     const quantity = getQuantityFromText(message);
     const isJustNumber = /^-?\d+(?:\.\d+)?$/.test(message.trim());
 
-  // 1. If a line is selected and they type just a number (quantity only)
-  if (!isExplicitLineSelect && isJustNumber && quantity !== null && selectedLineNameRef.current) {
-    const result = await handleAction({
-      name: "update_item_quantity",
-      args: { item_name: selectedLineNameRef.current, quantity },
-    });
-    addMessage({
-      role: "bot",
-      text: result.success === false
-        ? result.error || "I could not update the quantity."
-        : result.message || `Quantity updated to ${quantity}. Do you want to post this data entry?`,
-    });
-    setStatus(result.success === false ? "error" : "idle");
-    return true;
-  }
-
-  // 2. Explicit line selection
-  if (isExplicitLineSelect) {
-    const line = findNavLine(lineQuery);
-    if (line) {
-      await handleLocalLineSelection(line);
-      return true;
-    } else {
-      addMessage({
-        role: "bot",
-        text: `Line item "${lineQuery}" not found. Please try again.`,
-      });
-      setStatus("idle");
-      return true;
-    }
-  }
-
-  // 3. Message contains both line name and quantity
-  if (quantity !== null && lineQuery) {
-    const line = findNavLine(lineQuery);
-    if (line) {
-      const lineName = getLineSelectionText(line);
+    // 1. If a line is selected and they type just a number (quantity only)
+    if (
+      !isExplicitLineSelect &&
+      isJustNumber &&
+      quantity !== null &&
+      selectedLineNameRef.current
+    ) {
       const result = await handleAction({
         name: "update_item_quantity",
-        args: { item_name: lineName, quantity },
+        args: { item_name: selectedLineNameRef.current, quantity },
       });
       addMessage({
         role: "bot",
-        text: result.success === false
-          ? result.error || "I could not update the quantity."
-          : result.message || `Quantity for ${lineName} updated to ${quantity}. Do you want to post this data entry?`,
+        text:
+          result.success === false
+            ? result.error || "I could not update the quantity."
+            : result.message ||
+              `Quantity updated to ${quantity}. Do you want to post this data entry?`,
       });
       setStatus(result.success === false ? "error" : "idle");
       return true;
     }
-  }
 
-  // 4. Quantity provided but no line selected yet
-  if (quantity !== null && !selectedLineNameRef.current) {
-    addMessage({
-      role: "bot",
-      text: "Please select a line item first, then provide Total Units.",
-    });
-    setStatus("idle");
-    return true;
-  }
+    // 2. Explicit line selection
+    if (isExplicitLineSelect) {
+      const line = findNavLine(lineQuery);
+      if (line) {
+        await handleLocalLineSelection(line);
+        return true;
+      } else {
+        addMessage({
+          role: "bot",
+          text: `Line item "${lineQuery}" not found. Please try again.`,
+        });
+        setStatus("idle");
+        return true;
+      }
+    }
 
-  return false;
+    // 3. Message contains both line name and quantity
+    if (quantity !== null && lineQuery) {
+      const line = findNavLine(lineQuery);
+      if (line) {
+        const lineName = getLineSelectionText(line);
+        const result = await handleAction({
+          name: "update_item_quantity",
+          args: { item_name: lineName, quantity },
+        });
+        addMessage({
+          role: "bot",
+          text:
+            result.success === false
+              ? result.error || "I could not update the quantity."
+              : result.message ||
+                `Quantity for ${lineName} updated to ${quantity}. Do you want to post this data entry?`,
+        });
+        setStatus(result.success === false ? "error" : "idle");
+        return true;
+      }
+    }
+
+    // 4. Quantity provided but no line selected yet
+    if (quantity !== null && !selectedLineNameRef.current) {
+      addMessage({
+        role: "bot",
+        text: "Please select a line item first, then provide Total Units.",
+      });
+      setStatus("idle");
+      return true;
+    }
+
+    return false;
   };
 
   const handleSendMessage = async (messageOverride?: string) => {
@@ -1458,9 +1553,8 @@ export default function VoiceBot() {
     setInputText("");
 
     // Detect Data Entry intent
-    const isDataEntryIntent = /data entry|batch|nav data|apply data|start data/i.test(
-      messageToSend,
-    );
+    const isDataEntryIntent =
+      /data entry|batch|nav data|apply data|start data/i.test(messageToSend);
     let requestPoData: POState = poRef.current;
 
     if (isDataEntryIntent && !poRef.current.isActive) {
@@ -1583,7 +1677,8 @@ export default function VoiceBot() {
         text:
           result.success === false
             ? result.error || "Failed to load batch line items."
-            : result.message || `Batch ${batch.batch_no} selected. Please choose a line item from the list below.`,
+            : result.message ||
+              `Batch ${batch.batch_no} selected. Please choose a line item from the list below.`,
       });
       setStatus(result.success === false ? "error" : "idle");
     } catch (err) {
@@ -1599,14 +1694,15 @@ export default function VoiceBot() {
     if (viewingSavedChat) return;
 
     stopAllAudio();
-    addMessage({ role: "user", text: `I select item ${getLineSelectionText(line)}` });
+    addMessage({
+      role: "user",
+      text: `I select item ${getLineSelectionText(line)}`,
+    });
     setStatus("thinking");
     await handleLocalLineSelection(line);
   };
 
-  const getActions = () => [
-    "Start Data Entry",
-  ];
+  const getActions = () => ["Start Data Entry"];
 
   return (
     <div className="flex h-screen bg-slate-100 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 transition-colors duration-300 overflow-hidden font-sans">
@@ -1643,10 +1739,11 @@ export default function VoiceBot() {
             animate={isMobile ? { x: 0 } : { width: 260, opacity: 1 }}
             exit={isMobile ? { x: -280 } : { width: 0, opacity: 0 }}
             transition={{ duration: 0.25, ease: "easeInOut" }}
-            className={`flex flex-col bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 overflow-hidden flex-shrink-0 z-40 ${isMobile
-              ? "fixed inset-y-0 left-0 w-[280px] shadow-2xl"
-              : "relative"
-              }`}
+            className={`flex flex-col bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 overflow-hidden flex-shrink-0 z-40 ${
+              isMobile
+                ? "fixed inset-y-0 left-0 w-[280px] shadow-2xl"
+                : "relative"
+            }`}
           >
             {/* Logo */}
             <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-3">
@@ -1937,7 +2034,6 @@ export default function VoiceBot() {
               )}
             </AnimatePresence>
 
-
             {/* Voice Wave Animation */}
             {!viewingSavedChat && isConnected && (
               <div className="flex items-center justify-center gap-1 py-3 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
@@ -1966,7 +2062,10 @@ export default function VoiceBot() {
             {/* Data Entry Step Indicator */}
             {po.activeFlow === "DATA_ENTRY" && !viewingSavedChat && (
               <div className="mx-4 mt-3 px-4 py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 flex items-center gap-3">
-                <ClipboardList size={16} className="text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                <ClipboardList
+                  size={16}
+                  className="text-emerald-600 dark:text-emerald-400 flex-shrink-0"
+                />
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
                     Data Entry:
@@ -1975,8 +2074,7 @@ export default function VoiceBot() {
                     {po.navData?.data?.header?.[0]?.batcH_NO
                       ? `Batch ${po.navData.data.header[0].batcH_NO}`
                       : "Select a batch"}
-                    {selectedLineName &&
-                      ` → ${selectedLineName}`}
+                    {selectedLineName && ` → ${selectedLineName}`}
                   </span>
                 </div>
               </div>
@@ -1993,7 +2091,9 @@ export default function VoiceBot() {
                     NavFarm AI Assistant
                   </h3>
                   <p className="text-sm text-zinc-400 dark:text-zinc-500 leading-relaxed px-4">
-                    I can help you with NavFarm data entry — selecting batches, updating line items with quantities, and posting your data entries.
+                    I can help you with NavFarm data entry — selecting batches,
+                    updating line items with quantities, and posting your data
+                    entries.
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-8 w-full">
                     {getActions().map((action) => (
@@ -2020,10 +2120,11 @@ export default function VoiceBot() {
                   >
                     {/* Avatar */}
                     <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1 ${msg.role === "user"
-                        ? "bg-gradient-to-br from-emerald-400 to-emerald-600 text-white"
-                        : "bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-emerald-500"
-                        }`}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1 ${
+                        msg.role === "user"
+                          ? "bg-gradient-to-br from-emerald-400 to-emerald-600 text-white"
+                          : "bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-emerald-500"
+                      }`}
                     >
                       {msg.role === "user" ? (
                         <User size={14} />
@@ -2038,10 +2139,11 @@ export default function VoiceBot() {
                     >
                       <div className="flex items-center gap-2 mb-1.5">
                         <span
-                          className={`text-[11px] font-bold ${msg.role === "user"
-                            ? "text-zinc-500 dark:text-zinc-400"
-                            : "text-emerald-600 dark:text-emerald-400"
-                            }`}
+                          className={`text-[11px] font-bold ${
+                            msg.role === "user"
+                              ? "text-zinc-500 dark:text-zinc-400"
+                              : "text-emerald-600 dark:text-emerald-400"
+                          }`}
                         >
                           {msg.role === "user" ? "You" : "AI Assistance"}
                         </span>
@@ -2050,10 +2152,11 @@ export default function VoiceBot() {
                         </span>
                       </div>
                       <div
-                        className={`px-4 py-3 rounded-2xl text-[14px] leading-relaxed whitespace-pre-wrap break-words shadow-sm ${msg.role === "user"
-                          ? "bg-emerald-600 dark:bg-emerald-500 text-white rounded-tr-sm"
-                          : "bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-100 rounded-tl-sm"
-                          }`}
+                        className={`px-4 py-3 rounded-2xl text-[14px] leading-relaxed whitespace-pre-wrap break-words shadow-sm ${
+                          msg.role === "user"
+                            ? "bg-emerald-600 dark:bg-emerald-500 text-white rounded-tr-sm"
+                            : "bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-100 rounded-tl-sm"
+                        }`}
                       >
                         {formatMessageText(msg.text)}
                         {msg.isStreaming && (
@@ -2062,7 +2165,9 @@ export default function VoiceBot() {
 
                         {/* Inline Batch List Buttons */}
                         {msg.role === "bot" &&
-                          /(?:select a batch|choose a batch|available batches|बैच चुनें|बैच का चयन|उपलब्ध बैच|बैच चुनिए)/i.test(msg.text) &&
+                          /(?:select a batch|choose a batch|available batches|बैच चुनें|बैच का चयन|उपलब्ध बैच|बैच चुनिए)/i.test(
+                            msg.text,
+                          ) &&
                           messages[messages.length - 1]?.id === msg.id && (
                             <div className="mt-4 grid grid-cols-1 gap-2 w-full">
                               <div className="flex items-center justify-between gap-3 mb-1">
@@ -2093,53 +2198,72 @@ export default function VoiceBot() {
                                 </div>
                               )}
 
-                              {!isBatchesLoading && !batchesError && batchGroups.length === 0 && (
-                                <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400">
-                                  No batches found for the selected NavFarm filters.
-                                </div>
-                              )}
-
-                              {!isBatchesLoading && !batchesError && batchGroups.map((group) => (
-                                <div key={`${group.lob_id}-${group.line_of_business}`} className="space-y-2">
-                                  <div className="flex items-center justify-between gap-3 px-1">
-                                    <p className="text-[11px] font-black uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
-                                      {group.line_of_business}
-                                    </p>
-                                    <p className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500">
-                                      {group.batches.length} batches
-                                    </p>
+                              {!isBatchesLoading &&
+                                !batchesError &&
+                                batchGroups.length === 0 && (
+                                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400">
+                                    No batches found for the selected NavFarm
+                                    filters.
                                   </div>
-                                  {group.batches.map((batch) => (
-                                    <button
-                                      key={`${group.lob_id}-${batch.batch_id}`}
-                                      onClick={() => void handleBatchSelect(batch)}
-                                      disabled={isDetailsLoading}
-                                      className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-emerald-500 hover:bg-emerald-50/30 disabled:opacity-60 disabled:cursor-wait transition-all text-left flex justify-between items-center gap-3 group"
-                                    >
-                                      <div className="min-w-0">
-                                        <p className="text-sm font-bold text-zinc-800 dark:text-zinc-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 break-words">
-                                          {batch.batch_no}
-                                        </p>
-                                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                                          Remaining {batch.remaining_stocks} / Opening {batch.opening_stocks}
-                                        </p>
-                                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                                          Start {displayValue(batch.start_date)} • Last entry {displayValue(batch.last_entry_date)}
-                                        </p>
-                                      </div>
-                                      <div className="flex items-center gap-2 flex-shrink-0">
-                                        {isDetailsLoading && (
-                                          <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
-                                        )}
-                                        <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
-                                          {displayValue(batch.status)}
-                                        </span>
-                                        <ChevronRight size={16} className="text-zinc-300 dark:text-zinc-700 group-hover:text-emerald-500" />
-                                      </div>
-                                    </button>
-                                  ))}
-                                </div>
-                              ))}
+                                )}
+
+                              {!isBatchesLoading &&
+                                !batchesError &&
+                                batchGroups.map((group) => (
+                                  <div
+                                    key={`${group.lob_id}-${group.line_of_business}`}
+                                    className="space-y-2"
+                                  >
+                                    <div className="flex items-center justify-between gap-3 px-1">
+                                      <p className="text-[11px] font-black uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
+                                        {group.line_of_business}
+                                      </p>
+                                      <p className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500">
+                                        {group.batches.length} batches
+                                      </p>
+                                    </div>
+                                    {group.batches.map((batch) => (
+                                      <button
+                                        key={`${group.lob_id}-${batch.batch_id}`}
+                                        onClick={() =>
+                                          void handleBatchSelect(batch)
+                                        }
+                                        disabled={isDetailsLoading}
+                                        className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-emerald-500 hover:bg-emerald-50/30 disabled:opacity-60 disabled:cursor-wait transition-all text-left flex justify-between items-center gap-3 group"
+                                      >
+                                        <div className="min-w-0">
+                                          <p className="text-sm font-bold text-zinc-800 dark:text-zinc-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 break-words">
+                                            {batch.batch_no}
+                                          </p>
+                                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                            Remaining {batch.remaining_stocks} /
+                                            Opening {batch.opening_stocks}
+                                          </p>
+                                          <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                                            Start{" "}
+                                            {displayValue(batch.start_date)} •
+                                            Last entry{" "}
+                                            {displayValue(
+                                              batch.last_entry_date,
+                                            )}
+                                          </p>
+                                        </div>
+                                        <div className="flex items-center gap-2 flex-shrink-0">
+                                          {isDetailsLoading && (
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
+                                          )}
+                                          <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
+                                            {displayValue(batch.status)}
+                                          </span>
+                                          <ChevronRight
+                                            size={16}
+                                            className="text-zinc-300 dark:text-zinc-700 group-hover:text-emerald-500"
+                                          />
+                                        </div>
+                                      </button>
+                                    ))}
+                                  </div>
+                                ))}
                             </div>
                           )}
 
@@ -2158,21 +2282,31 @@ export default function VoiceBot() {
                                 <button
                                   key={idx}
                                   onClick={() => void handleLineSelect(line)}
-                                  className={`w-full px-4 py-3 rounded-xl border transition-all text-left group shadow-sm ${selectedLineName === getLineSelectionText(line)
-                                    ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20"
-                                    : "border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/50 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:border-emerald-300 dark:hover:border-emerald-700"
-                                    }`}
+                                  className={`w-full px-4 py-3 rounded-xl border transition-all text-left group shadow-sm ${
+                                    selectedLineName ===
+                                    getLineSelectionText(line)
+                                      ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20"
+                                      : "border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/50 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:border-emerald-300 dark:hover:border-emerald-700"
+                                  }`}
                                 >
                                   <div className="flex flex-col gap-1">
                                     <p className="text-[12px] font-bold text-zinc-800 dark:text-zinc-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
                                       {getLineSelectionText(line)}
                                     </p>
                                     <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                                      {displayValue(line.parameteR_TYPE, "Line Item")}
+                                      {displayValue(
+                                        line.parameteR_TYPE,
+                                        "Line Item",
+                                      )}
                                     </p>
                                     <div className="flex justify-between items-center text-[10px]">
-                                      <span className="text-zinc-500 dark:text-zinc-400">Stock: {displayValue(line.stock)}</span>
-                                      <span className="text-emerald-600 dark:text-emerald-400 font-bold">{displayValue(line.uniT_COST)} {displayValue(line.dataentrY_UOM, "")}</span>
+                                      <span className="text-zinc-500 dark:text-zinc-400">
+                                        Stock: {displayValue(line.stock)}
+                                      </span>
+                                      <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                        {displayValue(line.uniT_COST)}{" "}
+                                        {displayValue(line.dataentrY_UOM, "")}
+                                      </span>
                                     </div>
                                   </div>
                                 </button>
@@ -2200,12 +2334,13 @@ export default function VoiceBot() {
                     }
                     void connect();
                   }}
-                  className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 transition-all shadow-sm ${viewingSavedChat
-                    ? "bg-zinc-100 text-zinc-400 cursor-not-allowed opacity-50 dark:bg-zinc-800 dark:text-zinc-500"
-                    : isConnected
-                      ? "bg-rose-500 text-white scale-95"
-                      : "bg-emerald-500 text-white hover:bg-emerald-600 hover:scale-105"
-                    }`}
+                  className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 transition-all shadow-sm ${
+                    viewingSavedChat
+                      ? "bg-zinc-100 text-zinc-400 cursor-not-allowed opacity-50 dark:bg-zinc-800 dark:text-zinc-500"
+                      : isConnected
+                        ? "bg-rose-500 text-white scale-95"
+                        : "bg-emerald-500 text-white hover:bg-emerald-600 hover:scale-105"
+                  }`}
                   title={
                     viewingSavedChat
                       ? "Cannot use voice in past chats"
@@ -2219,10 +2354,11 @@ export default function VoiceBot() {
 
                 {/* Text Input */}
                 <div
-                  className={`flex-1 flex items-center border rounded-2xl px-4 py-2.5 gap-2 transition-all ${viewingSavedChat
-                    ? "bg-zinc-50 dark:bg-zinc-800/40 border-zinc-200 dark:border-zinc-700/40 opacity-70 cursor-not-allowed"
-                    : "bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 focus-within:border-emerald-400 dark:focus-within:border-emerald-500"
-                    }`}
+                  className={`flex-1 flex items-center border rounded-2xl px-4 py-2.5 gap-2 transition-all ${
+                    viewingSavedChat
+                      ? "bg-zinc-50 dark:bg-zinc-800/40 border-zinc-200 dark:border-zinc-700/40 opacity-70 cursor-not-allowed"
+                      : "bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 focus-within:border-emerald-400 dark:focus-within:border-emerald-500"
+                  }`}
                 >
                   <input
                     disabled={viewingSavedChat !== null}
@@ -2252,12 +2388,13 @@ export default function VoiceBot() {
                         return next;
                       });
                     }}
-                    className={`flex-shrink-0 p-1 rounded-lg transition-colors ${viewingSavedChat
-                      ? "opacity-50 cursor-not-allowed"
-                      : isMuted
-                        ? "text-rose-500"
-                        : "text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300"
-                      }`}
+                    className={`flex-shrink-0 p-1 rounded-lg transition-colors ${
+                      viewingSavedChat
+                        ? "opacity-50 cursor-not-allowed"
+                        : isMuted
+                          ? "text-rose-500"
+                          : "text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300"
+                    }`}
                   >
                     {isMuted ? <VolumeX size={17} /> : <Volume2 size={17} />}
                   </button>
@@ -2295,10 +2432,11 @@ export default function VoiceBot() {
                 animate={isMobile ? { x: 0 } : { width: 280, opacity: 1 }}
                 exit={isMobile ? { x: 280 } : { width: 0, opacity: 0 }}
                 transition={{ duration: 0.25, ease: "easeInOut" }}
-                className={`flex flex-col bg-white dark:bg-zinc-900 border-l border-zinc-200 dark:border-zinc-800 overflow-hidden flex-shrink-0 z-40 ${isMobile
-                  ? "fixed inset-y-0 right-0 w-[280px] shadow-[-10px_0_30px_rgba(0,0,0,0.1)]"
-                  : "relative"
-                  }`}
+                className={`flex flex-col bg-white dark:bg-zinc-900 border-l border-zinc-200 dark:border-zinc-800 overflow-hidden flex-shrink-0 z-40 ${
+                  isMobile
+                    ? "fixed inset-y-0 right-0 w-[280px] shadow-[-10px_0_30px_rgba(0,0,0,0.1)]"
+                    : "relative"
+                }`}
               >
                 <div className="p-4 border-b border-zinc-200 dark:border-zinc-800">
                   <h2 className="font-bold text-sm text-zinc-800 dark:text-zinc-100">
@@ -2328,93 +2466,103 @@ export default function VoiceBot() {
                           <span>{detailsError}</span>
                         </div>
                       )}
-                      {!isDetailsLoading && !detailsError && !po.navData?.data?.header?.[0]?.batcH_NO && (
-                        <div className="px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 text-[12px] text-zinc-500 dark:text-zinc-400">
-                          Select a batch to load line items.
-                        </div>
-                      )}
-                      {!isDetailsLoading && !detailsError && po.navData?.data?.header?.[0]?.batcH_NO && (po.navData?.data?.line?.length ?? 0) === 0 && (
-                        <div className="px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 text-[12px] text-zinc-500 dark:text-zinc-400">
-                          No line items returned for this batch.
-                        </div>
-                      )}
-                      {!isDetailsLoading && !detailsError && po.navData?.data?.header?.[0]?.batcH_NO && (po.navData?.data?.line?.length ?? 0) > 0 && (
-                        <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1 scrollbar-hide">
-                        {po.navData.data.line.map((line, idx) => (
-                          <button
-                            key={idx}
-                            onClick={() => void handleLineSelect(line)}
-                            className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all group ${selectedLineName === getLineSelectionText(line)
-                              ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700"
-                              : line.actuaL_VALUE > 0
-                              ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800"
-                              : "bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 hover:border-emerald-500"
-                              }`}
-                          >
-                            <div className="grid grid-cols-1 gap-2">
-                              <div>
-                                <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                  Parameter Type
-                                </p>
-                                <p
-                                  className={`text-[12px] font-semibold leading-tight ${line.actuaL_VALUE > 0
-                                    ? "text-emerald-700 dark:text-emerald-400"
-                                    : "text-zinc-700 dark:text-zinc-200 group-hover:text-emerald-500"
-                                    }`}
-                                >
-                                  {displayValue(line.parameteR_TYPE)}
-                                </p>
-                              </div>
-                              <div>
-                                <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                  Parameter Name
-                                </p>
-                                <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200">
-                                  {displayValue(line.parameteR_NAME)}
-                                </p>
-                              </div>
-                              <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                  <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                    Cost Per Unit
-                                  </p>
-                                  <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200">
-                                    {displayValue(line.uniT_COST)}
-                                  </p>
+                      {!isDetailsLoading &&
+                        !detailsError &&
+                        !po.navData?.data?.header?.[0]?.batcH_NO && (
+                          <div className="px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 text-[12px] text-zinc-500 dark:text-zinc-400">
+                            Select a batch to load line items.
+                          </div>
+                        )}
+                      {!isDetailsLoading &&
+                        !detailsError &&
+                        po.navData?.data?.header?.[0]?.batcH_NO &&
+                        (po.navData?.data?.line?.length ?? 0) === 0 && (
+                          <div className="px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 text-[12px] text-zinc-500 dark:text-zinc-400">
+                            No line items returned for this batch.
+                          </div>
+                        )}
+                      {!isDetailsLoading &&
+                        !detailsError &&
+                        po.navData?.data?.header?.[0]?.batcH_NO &&
+                        (po.navData?.data?.line?.length ?? 0) > 0 && (
+                          <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1 scrollbar-hide">
+                            {po.navData.data.line.map((line, idx) => (
+                              <button
+                                key={idx}
+                                onClick={() => void handleLineSelect(line)}
+                                className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all group ${
+                                  selectedLineName ===
+                                  getLineSelectionText(line)
+                                    ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700"
+                                    : line.actuaL_VALUE > 0
+                                      ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800"
+                                      : "bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 hover:border-emerald-500"
+                                }`}
+                              >
+                                <div className="grid grid-cols-1 gap-2">
+                                  <div>
+                                    <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
+                                      Parameter Type
+                                    </p>
+                                    <p
+                                      className={`text-[12px] font-semibold leading-tight ${
+                                        line.actuaL_VALUE > 0
+                                          ? "text-emerald-700 dark:text-emerald-400"
+                                          : "text-zinc-700 dark:text-zinc-200 group-hover:text-emerald-500"
+                                      }`}
+                                    >
+                                      {displayValue(line.parameteR_TYPE)}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
+                                      Parameter Name
+                                    </p>
+                                    <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200">
+                                      {displayValue(line.parameteR_NAME)}
+                                    </p>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
+                                        Cost Per Unit
+                                      </p>
+                                      <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200">
+                                        {displayValue(line.uniT_COST)}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
+                                        Stock
+                                      </p>
+                                      <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200">
+                                        {displayValue(line.stock)}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
+                                      Item Name
+                                    </p>
+                                    <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200 break-words">
+                                      {displayValue(line.iteM_NAME)}
+                                    </p>
+                                  </div>
                                 </div>
-                                <div>
-                                  <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                    Stock
-                                  </p>
-                                  <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200">
-                                    {displayValue(line.stock)}
-                                  </p>
+                                <div className="flex justify-end items-center mt-2">
+                                  {line.actuaL_VALUE > 0 && (
+                                    <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                                      {line.actuaL_VALUE}{" "}
+                                      {textValue(line.dataentrY_UOM)}
+                                    </span>
+                                  )}
                                 </div>
-                              </div>
-                              <div>
-                                <p className="text-[9px] font-bold uppercase text-zinc-400 dark:text-zinc-500">
-                                  Item Name
-                                </p>
-                                <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200 break-words">
-                                  {displayValue(line.iteM_NAME)}
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex justify-end items-center mt-2">
-                              {line.actuaL_VALUE > 0 && (
-                                <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                                  {line.actuaL_VALUE}{" "}
-                                  {textValue(line.dataentrY_UOM)}
-                                </span>
-                              )}
-                            </div>
-                          </button>
-                        ))}
-                        </div>
-                      )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                     </div>
                   )}
-
                 </div>
               </motion.aside>
             )}
