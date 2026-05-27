@@ -1012,10 +1012,21 @@ export default function VoiceBot() {
         REMARK: textValue(h.remark),
       };
 
+      // const livestockData = navData.data.line
+      //   .filter((item) => item.inventorY_TYPE === "FA")
+      //   .flatMap((item) =>
+      //     item.livestock.map((live) => ({
+      //       livestock_No: live.livestock_No,
+      //       parameter_id: live.parameter_id,
+      //       item_id: live.item_id,
+      //       stage: live.stage,
+      //     })),
+      //   );
+
       const livestockData = navData.data.line
-        .filter((item) => item.inventorY_TYPE === "FA")
-        .flatMap((item) =>
-          item.livestock.map((live) => ({
+        ?.filter((item: any) => item.inventorY_TYPE === "FA")
+        ?.flatMap((item: any) =>
+          (item.livestock || []).map((live: any) => ({
             livestock_No: live.livestock_No,
             parameter_id: live.parameter_id,
             item_id: live.item_id,
