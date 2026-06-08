@@ -4,7 +4,7 @@ export const runtime = 'nodejs';
 
 const DEFAULT_NAVFARM_SUMMARY_URL = 'https://poultryapitest.navfarm.com/api/get_dataentry_summary';
 const DEFAULT_SUMMARY_PARAMS = {
-  Company_Id: '261',
+  Company_Id: '275',
   nature_id: '1',
   Location_Id: '1',
 };

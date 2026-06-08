@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 export const runtime = 'nodejs';
 
 const DEFAULT_NAVFARM_DETAILS_URL = 'https://poultryapitest.navfarm.com/api/get_dataentry_details';
-const DEFAULT_COMPANY_ID = '261';
+const DEFAULT_COMPANY_ID = '275';
 
 type DetailsParams = {
   Company_Id?: unknown;

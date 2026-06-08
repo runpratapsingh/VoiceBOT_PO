@@ -1002,7 +1002,7 @@ export default function VoiceBot() {
         START_DATE: textValue(h.s_DATE),
         RUNNING_COST: textValue(h.runninG_COST, "0"),
         CREATED_BY: intValue("778"),
-        company_id: textValue("261"),
+        company_id: textValue("275"),
         status: "posted",
         LOCATION: textValue(h.location),
         ENTRY_FROM: "Web",
