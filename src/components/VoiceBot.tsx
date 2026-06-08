@@ -1002,7 +1002,7 @@ export default function VoiceBot() {
         START_DATE: textValue(h.s_DATE),
         RUNNING_COST: textValue(h.runninG_COST, "0"),
         CREATED_BY: intValue("778"),
-        company_id: textValue("275"),
+        company_id: textValue("261"),
         status: "posted",
         LOCATION: textValue(h.location),
         ENTRY_FROM: "Web",
@@ -2106,17 +2106,6 @@ export default function VoiceBot() {
                     updating line items with quantities, and posting your data
                     entries.
                   </p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-8 w-full">
-                    {getActions().map((action) => (
-                      <button
-                        key={action}
-                        onClick={() => void handleSendMessage(action)}
-                        className="text-left px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-sm text-zinc-600 dark:text-zinc-400 hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all"
-                      >
-                        {action}
-                      </button>
-                    ))}
-                  </div>
                 </div>
               )}
 

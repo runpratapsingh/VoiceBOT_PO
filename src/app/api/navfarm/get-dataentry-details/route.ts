@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
-const DEFAULT_NAVFARM_DETAILS_URL = 'https://agriapitest.navfarm.com/api/get_dataentry_details';
-const DEFAULT_COMPANY_ID = '275';
+const DEFAULT_NAVFARM_DETAILS_URL = 'https://poultryapitest.navfarm.com/api/get_dataentry_details';
+const DEFAULT_COMPANY_ID = '261';
 
 type DetailsParams = {
   Company_Id?: unknown;
@@ -100,7 +100,7 @@ async function handleDetailsRequest(params: Required<DetailsParams>) {
     }
 
     const upstreamUrl = new URL(url);
-    upstreamUrl.searchParams.set('Company_Id', String(params.Company_Id));
+    upstreamUrl.searchParams.set('Company_Id', String(DEFAULT_COMPANY_ID));
     upstreamUrl.searchParams.set('batch_id', String(params.batch_id));
 
     console.log('[NavFarm Details API] Fetching upstream data entry details', {

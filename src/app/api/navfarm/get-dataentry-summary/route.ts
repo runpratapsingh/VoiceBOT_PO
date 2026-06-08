@@ -2,12 +2,17 @@ import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
-const DEFAULT_NAVFARM_SUMMARY_URL = 'https://agriapitest.navfarm.com/api/get_dataentry_summary';
+const DEFAULT_NAVFARM_SUMMARY_URL = 'https://poultryapitest.navfarm.com/api/get_dataentry_summary';
 const DEFAULT_SUMMARY_PARAMS = {
-  Company_Id: '275',
-  nature_id: '5',
+  Company_Id: '261',
+  nature_id: '1',
   Location_Id: '1',
 };
+// const DEFAULT_SUMMARY_PARAMS = {
+//   Company_Id: '275',
+//   nature_id: '5',
+//   Location_Id: '1',
+// };
 
 type SummaryParams = {
   Company_Id?: unknown;
@@ -83,9 +88,19 @@ async function handleSummaryRequest(params: Required<SummaryParams>) {
     }
 
     const upstreamUrl = new URL(url);
-    upstreamUrl.searchParams.set('Company_Id', String(params.Company_Id));
-    upstreamUrl.searchParams.set('nature_id', String(params.nature_id));
-    upstreamUrl.searchParams.set('Location_Id', String(params.Location_Id));
+    upstreamUrl.searchParams.set('Company_Id', String(DEFAULT_SUMMARY_PARAMS.Company_Id));
+    upstreamUrl.searchParams.set('nature_id', String(DEFAULT_SUMMARY_PARAMS.nature_id));
+    upstreamUrl.searchParams.set('Location_Id', String(DEFAULT_SUMMARY_PARAMS.Location_Id));
+
+    console.log("[NavFarm Summary API] Fetching upstream data entry summary", {
+      url,
+      params: {
+        Company_Id: String(DEFAULT_SUMMARY_PARAMS.Company_Id),
+        nature_id: String(DEFAULT_SUMMARY_PARAMS.nature_id),
+        Location_Id: String(DEFAULT_SUMMARY_PARAMS.Location_Id),
+      },
+    });
+    
 
     const upstream = await fetch(upstreamUrl, {
       method: 'GET',
